@@ -7,7 +7,10 @@ def get_config():
     config.LR = 3e-4
     config.GAMMA = 0.995
     config.EPS = 1
+
     config.TOTAL_TIMESTEPS = 10000000
+    config.NUM_UPDATES = 1
+    config.NUM_STEPS = 64  # 128
 
     config.NUM_ENVS = 1
 
@@ -26,6 +29,7 @@ def get_config():
     config.TRAIN_FREQ = 4
     config.TARGET_NETWORK_FREQ = 1000
     config.NSTEP = 1
+    config.REPLAY_PRIORITY_EXP = 1.0
 
     config.BATCH_SIZE = 32
 
@@ -33,8 +37,8 @@ def get_config():
     config.END_EPS = 0.01
     config.EPS_DECAY = 0.10
 
-    # config.WANDB = "disabled"  # "online" if want it to work
-    config.WANDB = "online"
+    config.WANDB = "disabled"  # "online" if want it to work
+    # config.WANDB = "online"
 
     config.WANDB_ENTITY = "jamesr-j"  # change this to your wandb username
 
