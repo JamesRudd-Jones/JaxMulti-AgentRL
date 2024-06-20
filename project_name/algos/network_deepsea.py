@@ -81,11 +81,11 @@ class PriorAndNotNN(nn.Module):
 
         x = jnp.concatenate([obs, actions], axis=1)
 
-        x = nn.Dense(16, kernel_init=glorot_normal())(x)
-        x = nn.elu(x)
-        x = nn.Dense(16, kernel_init=glorot_normal())(x)
-        x = nn.elu(x)
-        x = nn.Dense(1, kernel_init=glorot_normal())(x)
+        x = nn.Dense(64, kernel_init=kaiming_normal(), bias_init=constant(0.0))(x)
+        x = nn.relu(x)
+        x = nn.Dense(128, kernel_init=kaiming_normal(), bias_init=constant(0.0))(x)
+        x = nn.relu(x)
+        x = nn.Dense(1, kernel_init=kaiming_normal(), bias_init=constant(0.0))(x)
 
         # TODO test to do, want 0 mean and unit std deve after each linear layer of activation, check activation post each layer and print
         # TODO the x mean and x std and check that is 0 and unit std

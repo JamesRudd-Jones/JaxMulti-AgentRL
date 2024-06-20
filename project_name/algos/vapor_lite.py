@@ -2,19 +2,16 @@ import jax
 import jax.numpy as jnp
 import jax.random as jrandom
 import flax
-import flax.linen as nn
 import chex
 
 from functools import partial
-from typing import Any, Callable, Dict, Tuple, Sequence
-from collections import deque, namedtuple
+from typing import Any, Tuple
 import distrax
 
-from project_name.algos_vapor import SoftQNetwork, Actor, RandomisedPrior
+from project_name.algos.network_deepsea import SoftQNetwork, Actor, RandomisedPrior
 from flax.training.train_state import TrainState
 import optax
 import flashbax as fbx
-import sys
 from project_name.utils import TransitionNoInfo
 
 
@@ -42,14 +39,13 @@ class VAPOR_Lite:
         self.critic_params = self.critic_network.init(critic_key,
                                                       jnp.zeros((1, *env.observation_space(env_params).shape, 1)))
 
-        DEVICE = "cpu"  # TODO add some check that cpu unless gpu is present
         self.per_buffer = fbx.make_prioritised_flat_buffer(max_length=config.BUFFER_SIZE,
                                                            min_length=config.BATCH_SIZE,
                                                            sample_batch_size=config.BATCH_SIZE,
                                                            add_sequences=True,
                                                            add_batch_size=None,
                                                            priority_exponent=config.REPLAY_PRIORITY_EXP,
-                                                           device=DEVICE)
+                                                           device=config.DEVICE)
 
     def create_train_state(self, key: chex.Array) -> Tuple[
         type(flax.training.train_state), TrainStateCritic, TrainStateRP, Any, chex.PRNGKey]:  # TODO imrpove checks any
@@ -68,8 +64,9 @@ class VAPOR_Lite:
         def create_reward_state(key: chex.PRNGKey) -> TrainStateRP:  # TODO is this the best place to put it all?
             key, _key = jrandom.split(key)
             rp_params = \
-                self.rp_network.init(_key, (jnp.zeros((1, *self.env.observation_space(self.env_params).shape, 1)),
-                                            jnp.zeros((1, 1))))["params"]
+                self.rp_network.init(_key,
+                                     (jnp.zeros((1, *self.env.observation_space(self.env_params).shape, 1)),
+                                      jnp.zeros((1, 1))))["params"]
             reward_state = TrainStateRP.create(apply_fn=self.rp_network.apply,
                                                params=rp_params["trainable"],
                                                static_prior_params=rp_params["static_prior"],
@@ -78,7 +75,7 @@ class VAPOR_Lite:
 
         ensemble_keys = jrandom.split(key, self.config.NUM_ENSEMBLE)
         ensembled_reward_state = jax.vmap(create_reward_state, in_axes=(0))(ensemble_keys)
-        # TODO ensure that the rp actually changes over time between the ensemble but the prior stays the same
+        # TODO maybe update this to corax from yicheng
 
         buffer_state = self.per_buffer.init(
             TransitionNoInfo(state=jnp.zeros((*self.env.observation_space(self.env_params).shape, 1)),
@@ -186,14 +183,15 @@ class VAPOR_Lite:
 
             # Get the importance weights.
             importance_weights = (1. / batch.priorities).astype(jnp.float32)
-            importance_weights **= self.config.REPLAY_PRIORITY_EXP  # TODO is this the same? -> importance_sampling_exponent
+            importance_weights **= self.config.IMPORTANCE_SAMPLING_EXP  # TODO what is this val?
             importance_weights /= jnp.max(importance_weights)
 
             # reweight
             qf_loss = jnp.mean(importance_weights * qf_loss)
             new_priorities = jnp.abs(td_error) + 1e-7
 
-            return qf_loss, new_priorities[:, 0]  # to remove the last dimensions of new_priorities
+            return qf_loss, jax.lax.stop_gradient(
+                new_priorities[:, 0])  # to remove the last dimensions of new_priorities
 
         (critic_loss, new_priorities), grads = jax.value_and_grad(critic_loss, has_aux=True)(
             actor_state.params,
@@ -217,9 +215,7 @@ class VAPOR_Lite:
 
             _, log_pi, action_probs, _ = self.act(actor_params, obs, key)
 
-            actor_loss = jnp.mean(action_probs * ((state_reward_noise * action_probs * log_pi) - min_qf_values))
-
-            return actor_loss
+            return jnp.mean(action_probs * ((state_reward_noise * action_probs * log_pi) - min_qf_values))
 
         actor_loss, grads = jax.value_and_grad(actor_loss)(actor_state.params,
                                                            critic_state.params,
@@ -239,9 +235,9 @@ class VAPOR_Lite:
                 indrpr_state.params, indrpr_state.static_prior_params)
             indrpr_state = indrpr_state.apply_gradients(grads=grads)
 
-            return indrpr_state
+            return ensemble_loss, indrpr_state
 
-        obs = batch.experience.first.state
+        obs = batch.experience.first.state  # TODO bit messy so should probs clean up
         action = batch.experience.first.action
         reward = batch.experience.first.reward
 
@@ -253,9 +249,9 @@ class VAPOR_Lite:
         # TODO should this really be done once to each data point? rather than post-hoc
         ensemble_reward = jnp.repeat(jitter_reward[jnp.newaxis, :], self.config.NUM_ENSEMBLE, axis=0)
 
-        ensrpr_state = jax.vmap(train_ensemble)(ensrpr_state,
-                                                ensemble_state,
-                                                ensemble_action,
-                                                ensemble_reward)
+        ensembled_loss, ensrpr_state = jax.vmap(train_ensemble)(ensrpr_state,
+                                                                     ensemble_state,
+                                                                     ensemble_action,
+                                                                     ensemble_reward)
 
-        return actor_state, critic_state, ensrpr_state, buffer_state, key
+        return actor_state, critic_state, ensrpr_state, buffer_state, actor_loss, critic_loss, jnp.mean(ensembled_loss), key

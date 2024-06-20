@@ -8,9 +8,9 @@ def get_config():
     config.GAMMA = 0.995
     config.EPS = 1
 
-    config.TOTAL_TIMESTEPS = 10000000
-    config.NUM_UPDATES = 1
-    config.NUM_STEPS = 64  # 128
+    # config.TOTAL_TIMESTEPS = 10000000
+    config.NUM_UPDATES = 10000
+    config.NUM_STEPS = 128
 
     config.NUM_ENVS = 1
 
@@ -25,11 +25,10 @@ def get_config():
     config.ALPHA = 0.2
 
     config.BUFFER_SIZE = 100000
-    config.LEARNING_STARTS = 80000  # 10
-    config.TRAIN_FREQ = 4
-    config.TARGET_NETWORK_FREQ = 1000
-    config.NSTEP = 1
+    config.LEARNING_STARTS = int(config.NUM_UPDATES * 0.2)  # starts policy after 20% of outer loops
+    config.TARGET_NETWORK_FREQ = 4
     config.REPLAY_PRIORITY_EXP = 1.0
+    config.IMPORTANCE_SAMPLING_EXP = 0.9
 
     config.BATCH_SIZE = 32
 
@@ -37,8 +36,8 @@ def get_config():
     config.END_EPS = 0.01
     config.EPS_DECAY = 0.10
 
-    config.WANDB = "disabled"  # "online" if want it to work
-    # config.WANDB = "online"
+    # config.WANDB = "disabled"  # "online" if want it to work
+    config.WANDB = "online"
 
     config.WANDB_ENTITY = "jamesr-j"  # change this to your wandb username
 

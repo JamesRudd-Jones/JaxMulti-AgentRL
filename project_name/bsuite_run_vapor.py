@@ -1,13 +1,4 @@
 import distrax
-import gymnasium as gym
-from stable_baselines3.common.atari_wrappers import (ClipRewardEnv,
-                                                     EpisodicLifeEnv,
-                                                     FireResetEnv,
-                                                     MaxAndSkipEnv,
-                                                     NoopResetEnv,
-                                                     )
-from stable_baselines3.common.buffers import ReplayBuffer
-import flax.linen as nn
 import jax.numpy as jnp
 import jax
 import jax.random as jrandom
@@ -17,12 +8,9 @@ import random
 import numpy as np
 import optax
 from project_name.config import get_config  # TODO dodge need to know how to fix this
-from project_name.algos_vapor import SoftQNetwork, Actor, RandomisedPrior
+from project_name.algos.network_deepsea import SoftQNetwork, Actor, RandomisedPrior
 import wandb
 from project_name.buffer.prioritised_buffer import PrioritizedReplayBuffer
-import sys
-import bsuite
-from bsuite.utils import gym_wrapper
 import gymnax
 
 
