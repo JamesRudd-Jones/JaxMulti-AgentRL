@@ -60,6 +60,7 @@ class SAC:
             TransitionNoInfo(state=jnp.zeros((*self.env.observation_space(self.env_params).shape, 1)),
                              action=jnp.zeros((1), dtype=jnp.int32),
                              reward=jnp.zeros((1)),
+                             ensemble_reward=jnp.zeros((1)),
                              done=jnp.zeros((1), dtype=bool),
                              ))
 
@@ -75,7 +76,7 @@ class SAC:
         log_prob = policy_dist.log_prob(action)
         action_probs = policy_dist.probs
 
-        return action, log_prob[:, jnp.newaxis], action_probs, key
+        return action, log_prob, action_probs, key
 
     @partial(jax.jit, static_argnums=(0,))
     def update_target_network(self, critic_state: TrainStateCritic) -> TrainStateCritic:
@@ -102,16 +103,17 @@ class SAC:
 
             _, next_state_log_pi, next_state_action_probs, key = self.act(actor_params, nobs, key)
 
-            qf1_next_target = self.critic_network.apply(critic_target_params, nobs)
-            # TODO ensure it uses the right params
+            qf_next_target = self.critic_network.apply(critic_target_params, nobs)
 
-            min_qf_next_target = next_state_action_probs * (qf1_next_target - self.config.ALPHA * next_state_log_pi)
+            qf_next_target = next_state_action_probs * (qf_next_target) #  - self.config.ALPHA * next_state_log_pi)
+            # TODO above have removed entropy from policy evaluation
 
             # adapt Q-target for discrete Q-function
-            min_qf_next_target = min_qf_next_target.sum(axis=1)[:, jnp.newaxis]
+            qf_next_target = jnp.sum(qf_next_target, axis=1, keepdims=True)
 
             # VAPOR-LITE
-            next_q_value = reward + (1 - done) * self.config.GAMMA * (min_qf_next_target)
+            next_q_value = reward + (1 - done) * self.config.GAMMA * (qf_next_target)
+            # TODO should use done or discount? I think these match up
 
             # use Q-values only for the taken actions
             qf1_values = self.critic_network.apply(critic_params, obs)
@@ -120,7 +122,7 @@ class SAC:
             td_error = qf1_a_values - next_q_value  # TODO ensure this okay as other stuff vmaps over time?
 
             # mse loss below
-            qf_loss = jnp.mean(td_error ** 2)  # TODO check this is okay?
+            qf_loss = 0.5 * jnp.mean(jnp.square(td_error))  # TODO check this is okay?
 
             # Get the importance weights.
             importance_weights = (1. / batch.priorities).astype(jnp.float32)
@@ -131,8 +133,7 @@ class SAC:
             qf_loss = jnp.mean(importance_weights * qf_loss)
             new_priorities = jnp.abs(td_error) + 1e-7
 
-            return qf_loss, jax.lax.stop_gradient(
-                new_priorities[:, 0])  # to remove the last dimensions of new_priorities
+            return qf_loss, new_priorities[:, 0]  # to remove the last dimensions of new_priorities
 
         (critic_loss, new_priorities), grads = jax.value_and_grad(critic_loss, has_aux=True)(
             actor_state.params,

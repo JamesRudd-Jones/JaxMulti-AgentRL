@@ -9,12 +9,14 @@ from project_name.algos.sac import SAC
 from typing import NamedTuple
 import chex
 from project_name.utils import TransitionNoInfo
+import sys
 
 
 class Transition(NamedTuple):
     state: chex.Array
     action: chex.Array
     reward: chex.Array
+    ensemble_reward: chex.Array
     done: chex.Array
     info: jnp.ndarray
 
@@ -50,14 +52,15 @@ def run_train(config):
                     return action[jnp.newaxis], jnp.zeros((1, 1)), jnp.zeros((1, 2)), key
 
                 # act on this initial env_state if above certain outer steps
-                action, _, _, key = jax.lax.cond(update_steps > config.LEARNING_STARTS,
-                                                                   actor.act,
-                                                                   random_act,
-                                                                   actor_state.params,
-                                                                   obs[jnp.newaxis, :, :, jnp.newaxis],
-                                                                   key
-                                                                   )
-                # action, _, _, key = actor.act(actor_state.params, obs[jnp.newaxis, :, :, jnp.newaxis], key)
+                # action, _, _, key = jax.lax.cond(update_steps > config.LEARNING_STARTS,
+                #                                                    actor.act,
+                #                                                    random_act,
+                #                                                    actor_state.params,
+                #                                                    obs[jnp.newaxis, :, :, jnp.newaxis],
+                #                                                    key
+                #                                                    )
+                action, _, _, key = actor.act(actor_state.params, obs[jnp.newaxis, :, :, jnp.newaxis], key)
+                # action = jnp.ones((1), dtype=int)
 
                 # step in env
                 key, _key = jrandom.split(key)
@@ -66,8 +69,13 @@ def run_train(config):
                                                                 action[0],
                                                                 env_params)
 
+                key, _key = jrandom.split(key)
+                jitter_reward = reward[jnp.newaxis] + config.RP_NOISE * jrandom.normal(_key, shape=reward[jnp.newaxis].shape)
+
+                info["bad_episode"] = env_state.env_state.bad_episode
+
                 # update tings my dude
-                transition = Transition(obs[:, :, jnp.newaxis], action, reward[jnp.newaxis], done[jnp.newaxis], info)
+                transition = Transition(obs[:, :, jnp.newaxis], action, reward[jnp.newaxis], jitter_reward, done[jnp.newaxis], info)
 
                 return (actor_state, critic_state, ensrpr_state, buffer_state, nenv_state, nobs, done, key), transition
 
@@ -80,6 +88,7 @@ def run_train(config):
             buffer_state = actor.per_buffer.add(buffer_state, TransitionNoInfo(state=trajectory_batch.state,
                                                                                action=trajectory_batch.action,
                                                                                reward=trajectory_batch.reward,
+                                                                               ensemble_reward=trajectory_batch.ensemble_reward,
                                                                                done=trajectory_batch.done))
             # TODO maybe refresh the above so a bit better
             # needs the below to add the new trajectory_buffer
@@ -108,11 +117,13 @@ def run_train(config):
                 #     sys.exit()
                 metric_dict = {
                     "returns": metric["returned_episode_returns"][metric["returned_episode"]].mean(),
+                    "episode_won_total": jnp.sum(~metric["bad_episode"][metric["returned_episode"]]),
+                    "episodes_finished": jnp.sum(metric["returned_episode"]),
+                    "episode_won_average": jnp.sum(~metric["bad_episode"][metric["returned_episode"]]) / metric["returned_episode"].sum(),
                     "env_step": metric["update_steps"] * config.NUM_ENVS * config.NUM_STEPS,
                     "actor_loss": actor_loss,
                     "critic_loss": critic_loss,
                     "mean_ensembled_loss": mean_ensembled_loss
-                    # TODO add new metric re the 90% thingo idk how to do that tbh but lets get training for now
                 }
                 wandb.log(metric_dict)
 
@@ -146,6 +157,6 @@ def run_train(config):
 
 if __name__ == "__main__":
     config = get_config()
-    with jax.disable_jit(disable=False):
+    with jax.disable_jit(disable=True):
         train = run_train(config)
         out = train()

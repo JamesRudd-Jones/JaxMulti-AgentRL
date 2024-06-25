@@ -81,6 +81,7 @@ class VAPOR_Lite:
             TransitionNoInfo(state=jnp.zeros((*self.env.observation_space(self.env_params).shape, 1)),
                              action=jnp.zeros((1), dtype=jnp.int32),
                              reward=jnp.zeros((1)),
+                             ensemble_reward=jnp.zeros((1)),
                              done=jnp.zeros((1), dtype=bool),
                              ))
 
@@ -94,9 +95,18 @@ class VAPOR_Lite:
         policy_dist = distrax.Categorical(logits=logits)
         action = policy_dist.sample(seed=_key)
         log_prob = policy_dist.log_prob(action)
+        # action_probs = policy_dist.prob(action)
         action_probs = policy_dist.probs
+        z = action_probs == 0.0
+        z = z * 1e-8
+        log_prob = jnp.log(action_probs + z)  # TODO idk if this is right but eyo
 
-        return action, log_prob[:, jnp.newaxis], action_probs, key
+        # pi_s, log_pi_s = self.actor_network.apply(actor_params, obs)
+        # action = jnp.argmax(pi_s, axis=1)  # TODO is it an argmax or is it a sample?
+        #
+        # return action, log_pi_s, pi_s, key
+
+        return action, log_prob, action_probs, key
 
     @partial(jax.jit, static_argnums=(0,))
     def _get_reward_noise(self, ensrpr_state, obs: chex.Array, actions: chex.Array) -> chex.Array:
@@ -129,7 +139,8 @@ class VAPOR_Lite:
         reward_over_actions = jax.vmap(self._get_reward_noise, in_axes=(None, 0, 0))(ensrpr_state,
                                                                                      obs,
                                                                                      actions)
-        reward_over_actions = jnp.sum(reward_over_actions, axis=0)
+        # reward_over_actions = jnp.sum(reward_over_actions, axis=0)  # TODO removed the layer sum
+        reward_over_actions = jnp.swapaxes(reward_over_actions[:, :, 0], 0, 1)
 
         return reward_over_actions
 
@@ -190,8 +201,7 @@ class VAPOR_Lite:
             qf_loss = jnp.mean(importance_weights * qf_loss)
             new_priorities = jnp.abs(td_error) + 1e-7
 
-            return qf_loss, jax.lax.stop_gradient(
-                new_priorities[:, 0])  # to remove the last dimensions of new_priorities
+            return qf_loss, new_priorities[:, 0]  # to remove the last dimensions of new_priorities
 
         (critic_loss, new_priorities), grads = jax.value_and_grad(critic_loss, has_aux=True)(
             actor_state.params,
@@ -228,7 +238,7 @@ class VAPOR_Lite:
             def reward_predictor_loss(rp_params, prior_params):
                 rew_pred = indrpr_state.apply_fn(
                     {"params": {"static_prior": prior_params, "trainable": rp_params}}, (obs, actions))
-                loss = jnp.mean((rew_pred - rewards) ** 2)
+                loss = jnp.mean(jnp.square(rew_pred - rewards))
                 return loss, rew_pred
 
             (ensemble_loss, reward_preds), grads = jax.value_and_grad(reward_predictor_loss, has_aux=True)(
@@ -239,14 +249,10 @@ class VAPOR_Lite:
 
         obs = batch.experience.first.state  # TODO bit messy so should probs clean up
         action = batch.experience.first.action
-        reward = batch.experience.first.reward
+        jitter_reward = batch.experience.first.ensemble_reward
 
         ensemble_state = jnp.repeat(obs[jnp.newaxis, :], self.config.NUM_ENSEMBLE, axis=0)
         ensemble_action = jnp.repeat(action[jnp.newaxis, :], self.config.NUM_ENSEMBLE, axis=0)
-
-        key, _key = jrandom.split(key)
-        jitter_reward = reward + self.config.RP_NOISE * jrandom.normal(_key, shape=reward.shape)
-        # TODO should this really be done once to each data point? rather than post-hoc
         ensemble_reward = jnp.repeat(jitter_reward[jnp.newaxis, :], self.config.NUM_ENSEMBLE, axis=0)
 
         ensembled_loss, ensrpr_state = jax.vmap(train_ensemble)(ensrpr_state,

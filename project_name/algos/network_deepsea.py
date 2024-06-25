@@ -14,7 +14,7 @@ class SoftQNetwork(nn.Module):
                     kernel_init=kaiming_normal(), bias_init=constant(0.0))(x)
         x = nn.relu(x)
 
-        x = nn.Conv(32, kernel_size=(2, 2), strides=(1, 1), padding="VALID",
+        x = nn.Conv(64, kernel_size=(2, 2), strides=(1, 1), padding="VALID",
                     kernel_init=kaiming_normal(), bias_init=constant(0.0))(x)
 
         x = x.reshape((x.shape[0], -1))
@@ -38,7 +38,7 @@ class Actor(nn.Module):
                     kernel_init=kaiming_normal(), bias_init=constant(0.0))(x)
         x = nn.relu(x)
 
-        x = nn.Conv(32, kernel_size=(2, 2), strides=(1, 1), padding="VALID",
+        x = nn.Conv(64, kernel_size=(2, 2), strides=(1, 1), padding="VALID",
                     kernel_init=kaiming_normal(), bias_init=constant(0.0))(x)
 
         x = x.reshape((x.shape[0], -1))
@@ -49,6 +49,11 @@ class Actor(nn.Module):
         x = nn.relu(x)
 
         logits = nn.Dense(self.action_dim, kernel_init=kaiming_normal(), bias_init=constant(0.0))(x)
+
+        # pi_s = nn.softmax(logits, axis=1)
+        # log_pi_s = jnp.log(pi_s + (pi_s == 0) * 1e-8)
+        #
+        # return pi_s, log_pi_s
 
         return logits
 
@@ -64,7 +69,7 @@ class PriorAndNotNN(nn.Module):
                     kernel_init=kaiming_normal(), bias_init=constant(0.0))(obs)
         obs = nn.relu(obs)
 
-        obs = nn.Conv(32, kernel_size=(2, 2), strides=(1, 1), padding="VALID",
+        obs = nn.Conv(64, kernel_size=(2, 2), strides=(1, 1), padding="VALID",
                     kernel_init=kaiming_normal(), bias_init=constant(0.0))(obs)
 
         obs = obs.reshape((obs.shape[0], -1))
