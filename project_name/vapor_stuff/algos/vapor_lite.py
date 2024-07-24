@@ -8,11 +8,11 @@ from functools import partial
 from typing import Any, Tuple
 import distrax
 
-from project_name.algos.network_deepsea import SoftQNetwork, Actor, RandomisedPrior
+from project_name.vapor_stuff.algos.network_deepsea import SoftQNetwork, Actor, RandomisedPrior
 from flax.training.train_state import TrainState
 import optax
 import flashbax as fbx
-from project_name.utils import TransitionNoInfo
+from project_name.vapor_stuff.utils import TransitionNoInfo
 
 
 class TrainStateCritic(TrainState):  # TODO check gradients do not update target_params

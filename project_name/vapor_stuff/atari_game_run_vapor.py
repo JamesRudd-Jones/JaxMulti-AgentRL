@@ -6,8 +6,6 @@ from stable_baselines3.common.atari_wrappers import (ClipRewardEnv,
                                                      MaxAndSkipEnv,
                                                      NoopResetEnv,
                                                      )
-from stable_baselines3.common.buffers import ReplayBuffer
-import flax.linen as nn
 import jax.numpy as jnp
 import jax
 import jax.random as jrandom
@@ -16,11 +14,10 @@ from flax.training.train_state import TrainState
 import random
 import numpy as np
 import optax
-from project_name.config import get_config  # TODO dodge need to know how to fix this
-from project_name.algos import SoftQNetwork, Actor, RandomisedPrior
+from project_name.vapor_stuff.config import get_config  # TODO dodge need to know how to fix this
+from project_name.vapor_stuff.algos import SoftQNetwork, Actor, RandomisedPrior
 import wandb
-from project_name.buffer.prioritised_buffer import PrioritizedReplayBuffer
-import sys
+from project_name.vapor_stuff.buffer.prioritised_buffer import PrioritizedReplayBuffer
 
 
 def make_env(env_id, seed, idx, capture_video, run_name):
@@ -106,7 +103,8 @@ def main():
 
     def create_reward_state(key, model, config):
         key, _key = jrandom.split(key)
-        rp_params = model.init(_key, (np.array([envs.single_observation_space.sample()]), np.array([envs.single_action_space.sample()])[jnp.newaxis]))["params"]
+        rp_params = model.init(_key, (np.array([envs.single_observation_space.sample()]),
+                                      np.array([envs.single_action_space.sample()])[jnp.newaxis]))["params"]
         prior_params, reward_params = rp_params["static_prior"], rp_params["trainable"]
         reward_state = TrainState.create(apply_fn=randomised_prior.apply,
                                          params=reward_params,
@@ -114,7 +112,8 @@ def main():
         return prior_params, reward_state
 
     ensemble_keys = jrandom.split(key, config.NUM_ENSEMBLE)
-    ensembled_prior_params, ensembled_reward_state = jax.vmap(create_reward_state, in_axes=(0, None, None))(ensemble_keys, randomised_prior, config)
+    ensembled_prior_params, ensembled_reward_state = jax.vmap(create_reward_state, in_axes=(0, None, None))(
+        ensemble_keys, randomised_prior, config)
 
     # Automatic entropy tuning
     if config.AUTOTUNE:
@@ -153,6 +152,39 @@ def main():
         action_probs = policy_dist.probs
 
         return action, log_prob[:, jnp.newaxis], action_probs
+
+    def get_reward_noise(ensembled_prior_params, ensembled_reward_state, obs, actions):
+        ensemble_obs = jnp.repeat(obs[jnp.newaxis, :], config.NUM_ENSEMBLE, axis=0)
+        ensemble_action = jnp.repeat(actions[jnp.newaxis, :], config.NUM_ENSEMBLE, axis=0)
+
+        def single_reward_noise(reward_state, prior_params, ob, action):
+            rew_pred = randomised_prior.apply({"params": {"static_prior": prior_params,
+                                                          "trainable": reward_state.params}},
+                                              (ob, action))
+            return rew_pred
+
+        ensembled_reward = jax.vmap(single_reward_noise)(ensembled_reward_state, ensembled_prior_params,
+                                                         ensemble_obs,
+                                                         ensemble_action)
+
+        ensembled_reward = config.SIGMA_SCALE * jnp.std(ensembled_reward, axis=0)
+        ensembled_reward = jnp.minimum(ensembled_reward, 1)
+
+        return ensembled_reward
+
+    def reward_noise_over_actions(ensembled_prior_params, ensembled_reward_state, obs):
+        # run the get_reward_noise for each action choice, can probs vmap
+        actions = jnp.arange(0, envs.single_action_space.n, step=1)[:, jnp.newaxis]
+        actions = jnp.tile(actions, obs.shape[0])[:, :, jnp.newaxis]
+
+        obs = jnp.repeat(obs[jnp.newaxis, :], envs.single_action_space.n, axis=0)
+
+        reward_over_actions = jax.vmap(get_reward_noise, in_axes=(None, None, 0, 0))(ensembled_prior_params,
+                                                                                     ensembled_reward_state, obs,
+                                                                                     actions)
+        reward_over_actions = jnp.sum(reward_over_actions, axis=0)
+
+        return reward_over_actions
 
     # TRY NOT TO MODIFY: start the game
     obs, _ = envs.reset(seed=config.SEED)
@@ -206,13 +238,35 @@ def main():
                 _, next_state_log_pi, next_state_action_probs = get_action(actor_params, nstate, key)
                 qf1_next_target = critic.apply(critic_state.target_params, nstate)
 
+                next_state_reward_noise = reward_noise_over_actions(ensembled_prior_params,
+                                                                    ensembled_reward_state,
+                                                                    nstate)
+                state_action_reward_noise = get_reward_noise(ensembled_prior_params,
+                                                             ensembled_reward_state,
+                                                             state,
+                                                             action)
+
                 # CRITIC training
-                def critic_loss(critic_params, obs, actions, rewards, dones, next_state_log_pi, next_state_action_probs, qf1_next_target, key):
-                    # we can use the action probabilities instead of MC sampling to estimate the expectation
-                    min_qf_next_target = next_state_action_probs * (qf1_next_target - alpha * next_state_log_pi)
+                def critic_loss(critic_params, obs, actions, rewards, dones, next_state_log_pi,
+                                next_state_action_probs, qf1_next_target, next_state_reward_noise,
+                                state_action_reward_noise, key):
+                    # use the action probabilities instead of MC sampling to estimate the expectation since discrete
+                    # SAC
+                    # min_qf_next_target = next_state_action_probs * (qf1_next_target - alpha * next_state_log_pi)
+
+                    # VAPOR-LITE
+                    min_qf_next_target = next_state_action_probs * (qf1_next_target - (
+                                next_state_reward_noise * next_state_action_probs * next_state_log_pi))
+
                     # adapt Q-target for discrete Q-function
                     min_qf_next_target = min_qf_next_target.sum(axis=1)[:, jnp.newaxis]
-                    next_q_value = rewards + (1 - dones) * config.GAMMA * (min_qf_next_target)
+
+                    # SAC
+                    # next_q_value = rewards + (1 - dones) * config.GAMMA * (min_qf_next_target)
+
+                    # VAPOR-LITE
+                    next_q_value = rewards + state_action_reward_noise + (1 - dones) * config.GAMMA * (
+                        min_qf_next_target)
 
                     # use Q-values only for the taken actions
                     qf1_values = critic.apply(critic_params, obs)
@@ -234,6 +288,8 @@ def main():
                     next_state_log_pi,
                     next_state_action_probs,
                     qf1_next_target,
+                    next_state_reward_noise,
+                    state_action_reward_noise,
                     key)
 
                 rb.update_priority(abs_td)
@@ -242,12 +298,20 @@ def main():
 
                 min_qf_values = critic.apply(critic_state.params, state)
 
-                def actor_loss(actor_params, obs, min_qf_values, key):
+                state_reward_noise = reward_noise_over_actions(ensembled_prior_params,
+                                                               ensembled_reward_state,
+                                                               state)
+
+                def actor_loss(actor_params, obs, min_qf_values, state_reward_noise, key):
                     # ACTOR training
                     _, log_pi, action_probs = get_action(actor_params, obs, key)
 
                     # no need for reparameterisation, the expectation can be calculated for discrete actions
-                    actor_loss = jnp.mean(action_probs * ((alpha * log_pi) - min_qf_values))
+                    # SAC
+                    # actor_loss = jnp.mean(action_probs * ((alpha * log_pi) - min_qf_values))
+
+                    # VAPOR-LITE
+                    actor_loss = jnp.mean(action_probs * ((state_reward_noise * action_probs * log_pi) - min_qf_values))
 
                     return actor_loss, jax.lax.stop_gradient(action_probs)
 
@@ -255,17 +319,20 @@ def main():
                     actor_state.params,
                     state,
                     min_qf_values,
+                    state_reward_noise,
                     key
                 )  # TODO do we need action_probs2? nah lol just added cus cba to do has_aux
                 actor_state = actor_state.apply_gradients(grads=grads)
 
                 def train_ensemble(train_state, prior_params, obs, actions, rewards):
                     def reward_predictor_loss(rp_params):
-                        rew_pred = randomised_prior.apply({"params": {"static_prior": prior_params, "trainable": rp_params}}, (obs, actions))
+                        rew_pred = randomised_prior.apply(
+                            {"params": {"static_prior": prior_params, "trainable": rp_params}}, (obs, actions))
                         loss = jnp.mean((rew_pred - rewards) ** 2)
                         return loss, rew_pred
 
-                    (loss, reward_preds), grads = jax.value_and_grad(reward_predictor_loss, has_aux=True)(train_state.params)
+                    (loss, reward_preds), grads = jax.value_and_grad(reward_predictor_loss, has_aux=True)(
+                        train_state.params)
                     train_state = train_state.apply_gradients(grads=grads)
                     return train_state
 
@@ -273,7 +340,8 @@ def main():
                 ensemble_action = jnp.repeat(action[jnp.newaxis, :], config.NUM_ENSEMBLE, axis=0)
 
                 key, _key = jrandom.split(key)
-                jitter_reward = reward + config.RP_NOISE * jrandom.normal(_key, shape=reward.shape)  # TODO should this really be done once to each data point?
+                jitter_reward = reward + config.RP_NOISE * jrandom.normal(_key,
+                                                                          shape=reward.shape)  # TODO should this really be done once to each data point?
                 ensemble_reward = jnp.repeat(jitter_reward[jnp.newaxis, :], config.NUM_ENSEMBLE, axis=0)
 
                 ensembled_reward_state = jax.vmap(train_ensemble)(ensembled_reward_state, ensembled_prior_params,

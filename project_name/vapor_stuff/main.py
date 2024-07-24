@@ -1,7 +1,7 @@
 from absl import app
-from project_name.baselines_run import run_train
+from project_name.vapor_stuff.deepsea_run import run_train
 import wandb
-from project_name.config import get_config  # TODO dodge need to know how to fix this
+from project_name.vapor_stuff.config import get_config  # TODO dodge need to know how to fix this
 import jax
 from jax.lib import xla_bridge
 
@@ -15,7 +15,7 @@ def main(_):
     wandb.init(project="ProbInfMarl",
                entity=config.WANDB_ENTITY,
                config=config,
-               group="BASELINES",
+               group="DEEPSEA_ISH",
                mode=config.WANDB
                )
 

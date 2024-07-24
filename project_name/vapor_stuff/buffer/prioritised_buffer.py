@@ -4,8 +4,8 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from project_name.buffer.replay_buffer import ReplayBuffer
-from project_name.buffer.segment_tree import MinTree, SumTree
+from project_name.vapor_stuff.buffer.replay_buffer import ReplayBuffer
+from project_name.vapor_stuff.buffer.segment_tree import MinTree, SumTree
 
 
 class PrioritizedReplayBuffer(ReplayBuffer):

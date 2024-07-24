@@ -7,23 +7,12 @@ def get_config():
     config.LR = 3e-4
     config.GAMMA = 0.995
     config.EPS = 1
-    config.GRU_HIDDEN_DIM = 256
-    config.GAE_LAMBDA = 0.95
-    config.UPDATE_EPOCHS = 4
-    config.NUM_MINIBATCHS = 4
-    config.CLIP_EPS = 0.2
-    config.VF_COEF = 0.5
-    config.ENT_COEF = 0.01
-
-    config.ANNEAL_LR = False
-    config.MAX_GRAD_NORM = 0.5
 
     # config.TOTAL_TIMESTEPS = 10000000
-    config.NUM_UPDATES = 10  # 10000
-    config.NUM_INNER_STEPS = 16  # 128
-    config.NUM_META_STEPS  = 16
-    config.NUM_ENVS = 4
-    config.NUM_DEVICES = 1
+    config.NUM_UPDATES = 10000
+    config.NUM_STEPS = 128
+
+    config.NUM_ENVS = 1
 
     config.NUM_ENSEMBLE = 10
     config.RP_NOISE = 0.1
@@ -47,8 +36,5 @@ def get_config():
     # config.WANDB = "online"
 
     config.WANDB_ENTITY = "jamesr-j"  # change this to your wandb username
-
-    config.AGENT_TYPE = ["PPO", "PPO"]
-    config.NUM_AGENTS = 2  # TODO is this really the best way?
 
     return config

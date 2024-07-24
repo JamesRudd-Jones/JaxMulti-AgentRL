@@ -8,11 +8,11 @@ from functools import partial
 from typing import Any, Tuple
 import distrax
 
-from project_name.algos.network_deepsea import SoftQNetwork, Actor, RandomisedPrior
+from project_name.vapor_stuff.algos.network_deepsea import SoftQNetwork, Actor
 from flax.training.train_state import TrainState
 import optax
 import flashbax as fbx
-from project_name.utils import TransitionNoInfo
+from project_name.vapor_stuff.utils import TransitionNoInfo
 
 
 class TrainStateCritic(TrainState):  # TODO check gradients do not update target_params
@@ -133,7 +133,7 @@ class SAC:
             qf_loss = jnp.mean(importance_weights * qf_loss)
             new_priorities = jnp.abs(td_error) + 1e-7
 
-            return qf_loss, new_priorities[:, 0]  # to remove the last dimensions of new_priorities
+            return qf_loss, new_priorities[:, 0]  # to remove the last dimensions of new_priorities  # TODO again unsure if gradietns are okay but maybe fine cus has_aux
 
         (critic_loss, new_priorities), grads = jax.value_and_grad(critic_loss, has_aux=True)(
             actor_state.params,
@@ -155,7 +155,7 @@ class SAC:
 
             _, log_pi, action_probs, _ = self.act(actor_params, obs, key)
 
-            return jnp.mean(action_probs * ((self.config.ALPHA * log_pi) - min_qf_values))
+            return jnp.mean(action_probs * ((self.config.ALPHA * log_pi) - min_qf_values))  # TODO dont think this is right regarding value and grad as there is no loss as well? am unsure
 
         actor_loss, grads = jax.value_and_grad(actor_loss)(actor_state.params,
                                                            critic_state.params,

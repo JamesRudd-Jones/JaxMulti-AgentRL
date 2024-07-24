@@ -1,15 +1,13 @@
 import jax.numpy as jnp
 import jax
 import jax.random as jrandom
-from project_name.config import get_config  # TODO dodge need to know how to fix this
+from project_name.vapor_stuff.config import get_config  # TODO dodge need to know how to fix this
 import wandb
 import gymnax
-from project_name.algos.vapor_lite import VAPOR_Lite
-from project_name.algos.sac import SAC
+from project_name.vapor_stuff.algos import VAPOR_Lite
 from typing import NamedTuple
 import chex
-from project_name.utils import TransitionNoInfo
-import sys
+from project_name.vapor_stuff.utils import TransitionNoInfo
 
 
 class Transition(NamedTuple):
