@@ -1,7 +1,7 @@
 import jax
 import jax.numpy as jnp
 import jax.random as jrandom
-from ..utils import import_class_from_folder, batchify
+from ..utils import import_class_from_folder  # , batchify
 from functools import partial
 from typing import Any, Dict, Tuple
 import chex
@@ -11,9 +11,10 @@ from flax.training.train_state import TrainState
 
 # initialise agents from the config file deciding what the algorithms are
 class Agent:
-    def __init__(self, env, env_params, config, key: chex.PRNGKey):  # TODO add better chex
+    def __init__(self, env, env_params, config, utils, key: chex.PRNGKey):  # TODO add better chex
         self.env = env
         self.config = config
+        self.utils = utils
         self.agent_types = {idx: agent for idx, agent in enumerate(config.AGENT_TYPE)}
         self.agent = import_class_from_folder(self.agent_types[0])(env=env, env_params=env_params, key=key, config=config)
 

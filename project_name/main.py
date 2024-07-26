@@ -21,7 +21,7 @@ def main(_):
 
     config.DEVICE = xla_bridge.get_backend().platform
 
-    with jax.disable_jit(disable=False):
+    with jax.disable_jit(disable=config.DISABLE_JIT):
         train = jax.jit(run_train(config))
         out = train()
 

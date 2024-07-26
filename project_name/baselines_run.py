@@ -8,17 +8,25 @@ import gymnax
 from typing import NamedTuple
 import chex
 # from project_name.vapor_stuff.utils import TransitionNoInfo
+from .pax.envs.in_the_matrix import InTheMatrix, EnvParams as MatrixEnvParams
 from .pax.envs.iterated_matrix_game import IteratedMatrixGame, EnvParams
 # from .pax.agents.ppo.ppo import make_agent
 from .agents import Agent, MultiAgent
-from .utils import batchify, unbatchify, Transition, EvalTransition, ipd_visitation
+from .utils import Transition, EvalTransition, ipd_visitation, Utils, UtilsCNN
 import sys
 
 
 def run_train(config):
-    env = IteratedMatrixGame(num_inner_steps=config.NUM_INNER_STEPS, num_outer_steps=config.NUM_META_STEPS)
-    payoff = [[2, 2], [0, 3], [3, 0], [1, 1]]  # payoff matrix for the IPD
-    env_params = EnvParams(payoff_matrix=payoff)
+    payoff = jnp.array([[[3, 0], [5, 1]], [[3, 5], [0, 1]]])  # payoff matrix for the IPD
+    if config.CNN:
+        env = InTheMatrix(num_inner_steps=config.NUM_INNER_STEPS, num_outer_steps=config.NUM_META_STEPS,
+                          fixed_coin_location=False)
+        env_params = MatrixEnvParams(payoff_matrix=payoff, freeze_penalty=5)
+        utils = UtilsCNN(config)  # TODO this a bit dodge
+    else:
+        env = IteratedMatrixGame(num_inner_steps=config.NUM_INNER_STEPS, num_outer_steps=config.NUM_META_STEPS)
+        env_params = EnvParams(payoff_matrix=payoff)
+        utils = Utils(config)  # TODO this a bit dodge
 
     def train():
         key = jax.random.PRNGKey(config.SEED)
@@ -28,7 +36,7 @@ def run_train(config):
             pass
             # actor = Agent(env=env, config=config, key=key)  # TODO fix this m8y
         else:
-            actor = MultiAgent(env=env, env_params=env_params, config=config, key=key)
+            actor = MultiAgent(env=env, env_params=env_params, config=config, utils=utils, key=key)
         train_state, mem_state = actor.initialise()
 
         reset_key = jrandom.split(key, config["NUM_ENVS"])
@@ -43,14 +51,15 @@ def run_train(config):
             def _run_episode_step(runner_state, unused):
                 # take initial env_state
                 train_state, mem_state, env_state, obs, last_done, key = runner_state
-                obs_batch = batchify(obs, range(config.NUM_AGENTS), config.NUM_AGENTS, config["NUM_ENVS"])
+                obs_batch = utils.batchify_obs(obs, range(config.NUM_AGENTS), config.NUM_AGENTS, config["NUM_ENVS"])
 
                 mem_state, action_n, log_prob_n, value_n, key = actor.act(train_state, mem_state, obs_batch, last_done,
                                                                           key)
 
-                env_act = unbatchify(action_n, range(config.NUM_AGENTS), config.NUM_AGENTS, config["NUM_DEVICES"])
-                env_act = {k: v for k, v in env_act.items()}
-                env_act = jax.tree_map(lambda x: jnp.swapaxes(x, 0, 1), env_act)
+                # env_act = utils.unbatchify(action_n, range(config.NUM_AGENTS), config.NUM_AGENTS, config["NUM_DEVICES"])
+                # env_act = {k: v for k, v in env_act.items()}
+                # env_act = jax.tree_map(lambda x: jnp.swapaxes(x, 0, 1), env_act)
+                env_act = jnp.swapaxes(action_n, 0, 1)
 
                 # step in env
                 key, _key = jrandom.split(key)
@@ -64,8 +73,8 @@ def run_train(config):
                 info = jax.tree_map(lambda x: jnp.swapaxes(jnp.tile(x[:, jnp.newaxis], (1, config.NUM_AGENTS)), 0, 1),
                                     info)  # TODO not sure if need this basically
                 done_batch = jnp.swapaxes(jnp.tile(done[:, jnp.newaxis], (1, config.NUM_AGENTS)), 0, 1)
-                reward_batch = batchify(reward, range(config.NUM_AGENTS), config.NUM_AGENTS,
-                                        config["NUM_ENVS"]).squeeze(axis=-1)
+                reward_batch = utils.batchify(reward, range(config.NUM_AGENTS), config.NUM_AGENTS,
+                                              config["NUM_ENVS"]).squeeze(axis=-1)
 
                 transition = Transition(done_batch,
                                         done_batch,
@@ -87,10 +96,11 @@ def run_train(config):
             mem_state = actor.meta_act(mem_state)  # TODO is there a better way than this?
 
             # needs the below to add the new trajectory_buffer
-            update_state = train_state, mem_state, env_state, obs, done, key
-            train_state, mem_state, env_state, obs, done, key = actor.update(update_state, trajectory_batch)
 
-            # TODO some statement in update so only updates if not MFOS or someting idk
+            last_obs_batch = utils.batchify_obs(obs, range(config.NUM_AGENTS), config.NUM_AGENTS, config.NUM_ENVS)
+            train_state, mem_state, env_state, last_obs_batch, done, key = actor.update(train_state, mem_state, env_state,
+                                                                             last_obs_batch, done, key,
+                                                                             trajectory_batch)
 
             def callback(metrics, env_stats):
                 metric_dict = {
@@ -108,9 +118,9 @@ def run_train(config):
 
                 wandb.log(metric_dict)
 
-            env_stats = jax.tree_util.tree_map(lambda x: x.mean(), ipd_visitation(trajectory_batch.obs,
-                                                                                  trajectory_batch.action,
-                                                                                  obs))
+            env_stats = jax.tree_util.tree_map(lambda x: x.mean(), utils.visitation(env_state,
+                                                                                    trajectory_batch,
+                                                                                    obs))
 
             jax.experimental.io_callback(callback, None, trajectory_batch, env_stats)
 
@@ -145,10 +155,11 @@ def run_train(config):
             runner_state, update_steps = update_state
             train_state, mem_state, env_state, obs, done, key = runner_state
 
-            update_state = train_state, mem_state, env_state, obs, done, key
-            train_state, mem_state, env_state, obs, done, key = actor.meta_update(update_state,
+            last_obs_batch = utils.batchify_obs(obs, range(config.NUM_AGENTS), config.NUM_AGENTS, config.NUM_ENVS)
+            train_state, mem_state, env_state, last_obs_batch, done, key = actor.meta_update(train_state, mem_state, env_state,
+                                                                                  last_obs_batch, done, key,
                                                                                   collapsed_trajectory_batch)
-            # TODO need to sort out data for this bit if so and collapse etc to make it coherent
+            # TODO benchmark if need to output last_obs_batch and env_state and done or not as they don't change?
 
             metric = meta_trajectory_batch.info
             # update_steps = update_steps + 1  # TODO should add separate update for inner and outer? not sure about this

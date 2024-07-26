@@ -72,19 +72,9 @@ def import_class_from_folder(folder_name):
         return None
 
 
-def batchify(x: dict, agent_list, num_agents, num_envs):
-    inter = jnp.stack([x[a] for a in agent_list])
-    return inter.reshape((num_agents, num_envs, -1))
-
-
-def unbatchify(x: jnp.ndarray, agent_list, num_agents, num_devices):
-    x = x.reshape((num_agents, num_devices, -1))
-    return {i: x[i] for i in agent_list}
-
-
-def ipd_visitation(observations: jnp.ndarray, actions: jnp.ndarray, final_obs: jnp.ndarray) -> dict:
-    observations = observations[:, 0, :][:, jnp.newaxis, :]  # TODO index to agent 0 again
-    actions = actions[:, 0, :][:, jnp.newaxis, :]  # TODO index to agent 0 again
+def ipd_visitation(traj_batch: Transition, final_obs: jnp.ndarray) -> dict:
+    observations = traj_batch.obs[:, 0, :][:, jnp.newaxis, :]  # TODO index to agent 0 again
+    actions = traj_batch.action[:, 0, :][:, jnp.newaxis, :]  # TODO index to agent 0 again
     final_obs = final_obs[0]  # TODO index to agent 0
 
     # obs [num_inner_steps, num_agents, num_envs, ...]
@@ -93,7 +83,7 @@ def ipd_visitation(observations: jnp.ndarray, actions: jnp.ndarray, final_obs: j
     # obs = [0, 1, 2, 3, 4], a = [0, 1]
     # combine = [0, .... 9]
     state_actions = 2 * jnp.argmax(observations, axis=-1) + actions
-    state_actions = jnp.reshape(state_actions, (num_timesteps,) + state_actions.shape[1:],)
+    state_actions = jnp.reshape(state_actions, (num_timesteps,) + state_actions.shape[1:], )
     # assume final step taken is cooperate
 
     final_obs = jax.lax.expand_dims(2 * jnp.argmax(final_obs, axis=-1), [0])
@@ -119,3 +109,112 @@ def ipd_visitation(observations: jnp.ndarray, actions: jnp.ndarray, final_obs: j
         "cooperation_probability/DD": action_probs[3],
         "cooperation_probability/START": action_probs[4],
     }
+
+def ipditm_stats(state: Any, traj_batch: Transition, num_envs: int) -> dict:
+    from .pax.envs.in_the_matrix import Actions
+
+    traj1_actions = traj_batch.action[:, 0, :][:, jnp.newaxis, :]
+    traj2_actions = traj_batch.action[:, 1, :][:, jnp.newaxis, :]
+    traj1_rewards = traj_batch.reward[:, 0, :][:, jnp.newaxis, :]
+    traj2_rewards = traj_batch.reward[:, 1, :][:, jnp.newaxis, :]
+    traj1_obs = traj_batch.obs[1][:, 0, :][:, jnp.newaxis, :]
+    traj2_obs = traj_batch.obs[1][:, 1, :][:, jnp.newaxis, :]
+
+    """Compute statistics for IPDITM."""
+    interacts1 = (
+        jnp.count_nonzero(traj1_actions == Actions.interact) / num_envs
+    )
+    interacts2 = (
+        jnp.count_nonzero(traj2_actions == Actions.interact) / num_envs
+    )
+
+    soft_reset_mask = jnp.where(traj1_rewards != 0, 1, 0)
+    num_soft_resets = jnp.count_nonzero(traj1_rewards) / num_envs
+
+    num_sft_resets = jnp.maximum(1, num_soft_resets)
+    coops1 = (
+        soft_reset_mask * traj1_obs[..., 0]
+    ).sum() / (num_envs * num_sft_resets)
+    defect1 = (
+        soft_reset_mask * traj1_obs[..., 1]
+    ).sum() / (num_envs * num_sft_resets)
+    coops2 = (
+        soft_reset_mask * traj2_obs[..., 0]
+    ).sum() / (num_envs * num_sft_resets)
+    defect2 = (
+        soft_reset_mask * traj2_obs[..., 1]
+    ).sum() / (num_envs * num_sft_resets)
+
+    rewards1 = traj1_rewards.sum() / num_envs
+    rewards2 = traj2_rewards.sum() / num_envs
+    f_rewards1 = traj1_rewards[-1, ...].sum() / num_envs
+    f_rewards2 = traj2_rewards[-1, ...].sum() / num_envs
+
+    return {
+        "interactions/1": interacts1,
+        "interactions/2": interacts2,
+        "coop_coin/1": coops1,
+        "coop_coin/2": coops2,
+        "defect_coin/1": defect1,
+        "defect_coin/2": defect2,
+        "total_coin/1": coops1 + defect1,
+        "total_coin/2": coops2 + defect2,
+        "ratio/1": jnp.nan_to_num(coops1 / (coops1 + defect1), nan=0),
+        "ratio/2": jnp.nan_to_num(coops2 / (coops2 + defect2), nan=0),
+        "num_soft_resets": num_soft_resets,
+        "train/total_reward/player_1": rewards1,
+        "train/total_reward/player_2": rewards2,
+        "train/final_reward/player1": f_rewards1,
+        "train/final_reward/player2": f_rewards2,
+    }
+
+
+class Utils:
+    def __init__(self, config):
+        self.config = config
+
+    @staticmethod
+    def batchify(x: dict, agent_list, num_agents, num_envs):
+        inter = jnp.stack([x[a] for a in agent_list])
+        return inter.reshape((num_agents, num_envs, -1))
+
+    @staticmethod
+    def batchify_obs(x: dict, agent_list, num_agents, num_envs):
+        inter = jnp.stack([x[a] for a in agent_list])
+        return inter.reshape((num_agents, num_envs, -1))
+
+    @staticmethod
+    def unbatchify(x: jnp.ndarray, agent_list, num_agents, num_devices):
+        x = x.reshape((num_agents, num_devices, -1))
+        return {i: x[i] for i in agent_list}
+
+    @staticmethod
+    def ac_in(obs, dones, agent):
+        return (obs[jnp.newaxis, agent, :],
+                dones[jnp.newaxis, agent],
+                )
+
+    @staticmethod
+    def visitation(env_state, traj_batch, final_obs):
+        return ipd_visitation(traj_batch, final_obs)
+
+
+class UtilsCNN(Utils):
+    def __init__(self, config):
+        super().__init__(config)
+    @staticmethod
+    def batchify_obs(x: dict, agent_list, num_agents, num_envs):
+        obs = jnp.stack([x[a]["observation"] for a in agent_list]).reshape(
+            (num_agents, num_envs, *x[0]["observation"].shape[1:]))
+        inv = jnp.stack([x[a]["inventory"] for a in agent_list]).reshape((num_agents, num_envs, -1))
+        return (obs, inv)
+
+    @staticmethod
+    def ac_in(obs, dones, agent):
+        return ((obs[0][jnp.newaxis, agent, :],
+                 obs[1][jnp.newaxis, agent, :]),
+                dones[jnp.newaxis, agent],
+                )
+
+    def visitation(self, env_state, traj_batch, final_obs):
+        return ipditm_stats(env_state, traj_batch, self.config.NUM_ENVS)

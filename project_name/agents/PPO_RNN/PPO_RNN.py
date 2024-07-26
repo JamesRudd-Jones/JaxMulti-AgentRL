@@ -4,13 +4,13 @@ import jax.numpy as jnp
 from typing import Any
 import jax.random as jrandom
 from functools import partial
-from project_name.agents.PPO.network import ActorCritic  # TODO sort out this class import ting
+from project_name.agents.PPO_RNN.network import ActorCriticRNN, ScannedRNN  # TODO sort out this class import ting
 import optax
 from flax.training.train_state import TrainState
 from project_name.utils import MemoryState
 
 
-class PPOAgent:
+class PPO_RNNAgent:
     def __init__(self,
                  env,
                  env_params,
@@ -18,17 +18,31 @@ class PPOAgent:
                  config):
         self.config = config
         self.env = env
-        self.env_params = env_params
-        self.network = ActorCritic(env.action_space().n, config=config)
-        init_x = (jnp.zeros((1, config.NUM_ENVS, env.observation_space(env_params).n)),
-                  jnp.zeros((1, config.NUM_ENVS)),
-                  )
+        self.network = ActorCriticRNN(env.action_space().n, config=config)
+
         key, _key = jrandom.split(key)
+        init_hstate = ScannedRNN.initialize_carry(config["NUM_ENVS"], config["GRU_HIDDEN_DIM"])
 
-        self.network_params = self.network.init(_key, init_x)
+        if self.config.CNN:
+            init_x = ((jnp.zeros((1, config.NUM_ENVS, *env.observation_space(env_params)["observation"].shape)),
+                       jnp.zeros((1, config.NUM_ENVS, env.observation_space(env_params)["inventory"].shape))),
+                      jnp.zeros((1, config["NUM_ENVS"])),
+                      )
+        else:
+            init_x = (jnp.zeros((1, config["NUM_ENVS"], env.observation_space(env_params).n)),
+                      jnp.zeros((1, config["NUM_ENVS"])),
+                      )
 
-        def linear_schedule(count):  # TODO put this somewhere better
-            frac = (1.0 - (count // (config["NUM_MINIBATCHES"] * config["UPDATE_EPOCHS"])) / config["NUM_UPDATES"])
+
+        self.network_params = self.network.init(_key, init_hstate, init_x)
+        self.init_hstate = ScannedRNN.initialize_carry(config["NUM_ENVS"],
+                                                       config["GRU_HIDDEN_DIM"])  # TODO do we need both?
+
+        def linear_schedule(count):  # TODO put this somewhere better and think this is right?
+            if config["SPLIT_TRAIN"]:
+                count += config["NUM_UPDATES"]
+            frac = (1.0 - (count // (config["NUM_MINIBATCHES"] * config["UPDATE_EPOCHS"])) / config["TOTAL_UPDATES"])
+            # frac = 1 - count // 16 / num_updates
             return config["LR"] * frac
 
         if config["ANNEAL_LR"]:
@@ -44,11 +58,11 @@ class PPOAgent:
         return (TrainState.create(apply_fn=self.network.apply,
                                   params=self.network_params,
                                   tx=self.tx),
-                MemoryState(hstate=jnp.zeros((self.config.NUM_ENVS, 1)),
+                MemoryState(hstate=self.init_hstate,
                             extras={
                                 "values": jnp.zeros((self.config.NUM_ENVS, 1)),
                                 "log_probs": jnp.zeros((self.config.NUM_ENVS, 1)),
-                            })
+                            }, ),
                 )
 
     @partial(jax.jit, static_argnums=(0,))
@@ -57,7 +71,7 @@ class PPOAgent:
             "values": jnp.zeros((self.config.NUM_ENVS, 1)),
             "log_probs": jnp.zeros((self.config.NUM_ENVS, 1)),
         },
-            hstate=jnp.zeros((self.config.NUM_ENVS, 1)),
+            hstate=jnp.zeros((self.config.NUM_ENVS, self.config.GRU_HIDDEN_DIM)),
         )
         return mem_state
 
@@ -65,25 +79,28 @@ class PPOAgent:
     def meta_policy(self, mem_state):
         return mem_state
 
-    @partial(jax.jit, static_argnums=(0))
+    @partial(jax.jit, static_argnums=(0,))
     def act(self, train_state: Any, mem_state: Any, ac_in: Any, key: Any):  # TODO better implement checks
-        pi, value, action_logits = train_state.apply_fn(train_state.params, ac_in)
+        hstate, pi, value, action_logits = train_state.apply_fn(train_state.params, mem_state.hstate, ac_in)
         key, _key = jrandom.split(key)
         action = pi.sample(seed=_key)
         log_prob = pi.log_prob(action)
 
+        mem_state.extras["values"] = jnp.swapaxes(value, 0, 1)
+        mem_state.extras["log_probs"] = jnp.swapaxes(log_prob, 0, 1)  # TODO sort this out a bit
+
+        mem_state = mem_state._replace(hstate=hstate, extras=mem_state.extras)
+
         return mem_state, action, log_prob, value, key
 
-    @partial(jax.jit, static_argnums=(0))
+    @partial(jax.jit, static_argnums=(0,))
     def update(self, runner_state, traj_batch):
         # CALCULATE ADVANTAGE
-        train_state, mem_state, env_state, last_obs, last_done, key = runner_state
-        # avail_actions = jnp.ones(self.env.action_space(self.env.agents[0]).n)
-        ac_in = (last_obs[jnp.newaxis, :],
-                 last_done[jnp.newaxis, :],
-                 # avail_actions[jnp.newaxis, :],
-                 )
-        _, last_val, _ = train_state.apply_fn(train_state.params, ac_in)
+        train_state, mem_state, env_state, ac_in, key = runner_state
+        # ac_in = (last_obs[jnp.newaxis, :],
+        #          last_done[jnp.newaxis, :],
+        #          )
+        _, _, last_val, _ = train_state.apply_fn(train_state.params, mem_state.hstate, ac_in)
         last_val = last_val.squeeze()
 
         def _calculate_gae(traj_batch, last_val):
@@ -109,12 +126,13 @@ class PPOAgent:
         advantages, targets = _calculate_gae(traj_batch, last_val)
 
         def _update_epoch(update_state, unused):
-            def _update_minbatch(train_state, batch_info):
-                traj_batch, advantages, targets = batch_info
+            def _update_minibatch(train_state, batch_info):
+                init_hstate, traj_batch, advantages, targets = batch_info
 
-                def _loss_fn(params, traj_batch, gae, targets):
+                def _loss_fn(params, init_hstate, traj_batch, gae, targets):
                     # RERUN NETWORK
-                    pi, value, _ = train_state.apply_fn(params,
+                    _, pi, value, _ = train_state.apply_fn(params,
+                                                      init_hstate.squeeze(axis=0),
                                                       (traj_batch.obs,
                                                        traj_batch.done,
                                                        # traj_batch.avail_actions
@@ -150,16 +168,20 @@ class PPOAgent:
                     return total_loss, (value_loss, loss_actor, entropy)
 
                 grad_fn = jax.value_and_grad(_loss_fn, has_aux=True)
-                total_loss, grads = grad_fn(train_state.params, traj_batch, advantages, targets)
+                total_loss, grads = grad_fn(train_state.params, init_hstate, traj_batch, advantages, targets)
                 train_state = train_state.apply_gradients(grads=grads)
                 return train_state, total_loss
 
-            train_state, traj_batch, advantages, targets, key = update_state
+            train_state, init_hstate, traj_batch, advantages, targets, key = update_state
             key, _key = jrandom.split(key)
+
+            # adding an additional "fake" dimensionality to perform minibatching correctly
+            init_hstate = jnp.reshape(mem_state.hstate, (1, self.config["NUM_ENVS"], -1))
 
             permutation = jrandom.permutation(_key, self.config["NUM_ENVS"])
             traj_batch = jax.tree_map(lambda x: jnp.swapaxes(x, 0, 1), traj_batch)
-            batch = (traj_batch,
+            batch = (init_hstate,  # TODO check this axis swapping etc if it works
+                     traj_batch,
                      jnp.swapaxes(advantages, 0, 1).squeeze(),
                      jnp.swapaxes(targets, 0, 1).squeeze())
             shuffled_batch = jax.tree_util.tree_map(lambda x: jnp.take(x, permutation, axis=1), batch)
@@ -167,12 +189,12 @@ class PPOAgent:
             minibatches = jax.tree_util.tree_map(lambda x: jnp.swapaxes(
                 jnp.reshape(x, [x.shape[0], self.config["NUM_MINIBATCHES"], -1] + list(x.shape[2:]), ), 1, 0, ),
                                                  shuffled_batch, )
-
-            train_state, total_loss = jax.lax.scan(_update_minbatch, train_state, minibatches)
+            train_state, total_loss = jax.lax.scan(_update_minibatch, train_state, minibatches)
 
             traj_batch = jax.tree_map(lambda x: jnp.swapaxes(x, 0, 1), traj_batch)  # TODO dodge to swap back again
 
             update_state = (train_state,
+                            mem_state,
                             traj_batch,
                             advantages,
                             targets,
@@ -180,14 +202,13 @@ class PPOAgent:
                             )
             return update_state, total_loss
 
-        update_state = (train_state, traj_batch, advantages, targets, key)
+        update_state = (train_state, mem_state, traj_batch, advantages, targets, key)
         update_state, loss_info = jax.lax.scan(_update_epoch, update_state, None, self.config["UPDATE_EPOCHS"])
-        train_state, traj_batch, advantages, targets, key = update_state
+        train_state, mem_state, traj_batch, advantages, targets, key = update_state
 
-        return train_state, mem_state, env_state, last_obs, last_done, key
+        return train_state, mem_state, env_state, ac_in, key
 
     @partial(jax.jit, static_argnums=(0,))
     def meta_update(self, runner_state, traj_batch):
-        train_state, mem_state, env_state, last_obs, last_done, key = runner_state
-        return train_state, mem_state, env_state, last_obs, last_done, key
-
+        train_state, mem_state, env_state, ac_in, key = runner_state
+        return train_state, mem_state, env_state, ac_in, key

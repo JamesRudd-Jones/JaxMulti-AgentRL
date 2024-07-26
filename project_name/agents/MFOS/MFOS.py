@@ -30,13 +30,22 @@ class MFOSAgent:
         self.env = env
         self.env_params = env_params
         self.network = ActorCriticMFOSRNN(env.action_space().n, config=config)
-        init_x = (jnp.zeros((1, config.NUM_ENVS, env.observation_space(env_params).n)),
-                  jnp.zeros((1, config.NUM_ENVS)),
-                  )
-        # TODO think need some elements for the meta inputs?
+
         key, _key = jrandom.split(key)
         init_hstate = ScannedMFOSRNN.initialize_carry(config["NUM_ENVS"], config.GRU_HIDDEN_DIM)  # TODO remove this
         init_th = jnp.zeros((1, config.NUM_ENVS, config.GRU_HIDDEN_DIM // 3))
+
+        if self.config.CNN:
+            init_x = ((jnp.zeros((1, config.NUM_ENVS, *env.observation_space(env_params)["observation"].shape)),
+                       jnp.zeros((1, config.NUM_ENVS, env.observation_space(env_params)["inventory"].shape))),
+                      jnp.zeros((1, config.NUM_ENVS)),
+                      )
+        else:
+            init_x = (jnp.zeros((1, config.NUM_ENVS, env.observation_space(env_params).n)),
+                      jnp.zeros((1, config.NUM_ENVS)),
+                      )
+            self.network_params = self.network.init(_key, init_hstate, init_x, init_th)
+
         self.network_params = self.network.init(_key, init_hstate, init_x, init_th)
         self.init_hstate = ScannedMFOSRNN.initialize_carry(config["NUM_ENVS"],
                                                            config["GRU_HIDDEN_DIM"])  # TODO do we need both?
@@ -107,16 +116,16 @@ class MFOSAgent:
 
     @partial(jax.jit, static_argnums=(0,))
     def update(self, runner_state, traj_batch):
-        train_state, mem_state, env_state, last_obs, last_done, key = runner_state
-        return train_state, mem_state, env_state, last_obs, last_done, key
+        train_state, mem_state, env_state, ac_in, key = runner_state
+        return train_state, mem_state, env_state, ac_in, key
 
     @partial(jax.jit, static_argnums=(0,))
     def meta_update(self, runner_state, traj_batch):
         # CALCULATE ADVANTAGE
-        train_state, mem_state, env_state, last_obs, last_done, key = runner_state
-        ac_in = (last_obs[jnp.newaxis, :],
-                 last_done[jnp.newaxis, :],
-                 )
+        train_state, mem_state, env_state, ac_in, key = runner_state
+        # ac_in = (last_obs[jnp.newaxis, :],
+        #          last_done[jnp.newaxis, :],
+        #          )
         _, _, last_val, _, _ = train_state.apply_fn(train_state.params, mem_state.hstate, ac_in, mem_state.th)
         last_val = last_val.squeeze()
 
@@ -204,7 +213,7 @@ class MFOSAgent:
                      jnp.swapaxes(targets, 0, 1).squeeze())
             shuffled_batch = jax.tree_util.tree_map(lambda x: jnp.take(x, permutation, axis=1), batch)
             minibatches = jax.tree_util.tree_map(lambda x: jnp.swapaxes(
-                jnp.reshape(x, [x.shape[0], self.config["NUM_MINIBATCHS"], -1] + list(x.shape[2:]), ), 1, 0, ),
+                jnp.reshape(x, [x.shape[0], self.config["NUM_MINIBATCHES"], -1] + list(x.shape[2:]), ), 1, 0, ),
                                                  shuffled_batch, )
 
             train_state, total_loss = jax.lax.scan(_update_minbatch, train_state, minibatches)
@@ -225,4 +234,4 @@ class MFOSAgent:
         train_state, mem_state, traj_batch, advantages, targets, key = update_state
         # TODO unsure if need to update the mem_state at all with the new hstate thingos
 
-        return train_state, mem_state, env_state, last_obs, last_done, key
+        return train_state, mem_state, env_state, ac_in, key

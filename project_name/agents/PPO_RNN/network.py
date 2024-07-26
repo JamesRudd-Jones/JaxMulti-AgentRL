@@ -12,7 +12,7 @@ import seaborn as sns
 import matplotlib.pyplot as plt
 
 
-class ScannedMFOSRNN(nn.Module):
+class ScannedRNN(nn.Module):
     @functools.partial(nn.scan,
                        variable_broadcast="params",
                        in_axes=0,
@@ -51,39 +51,32 @@ class CNNtoLinear(nn.Module):
         return last_layer
 
 
-class ActorCriticMFOSRNN(nn.Module):
+class ActorCriticRNN(nn.Module):
     action_dim: Sequence[int]
     config: Dict
 
     @nn.compact
-    def __call__(self, hidden, x, th):
+    def __call__(self, hidden, x):
         obs, dones = x
-        hidden_t, hidden_a, hidden_c = jnp.split(hidden, 3, axis=-1)  # TODO check this ting I guess
 
-        # embedding = nn.Dense(128, kernel_init=orthogonal(np.sqrt(2)), bias_init=constant(0.0))(obs)
-        # embedding = nn.relu(embedding)
         if self.config["CNN"]:
-            meta_emb = CNNtoLinear()(obs)
-            actor_emb = CNNtoLinear()(obs)
-            critic_emb = CNNtoLinear()(obs)
+            embedding = CNNtoLinear()(obs)
         else:
-            meta_emb = nn.Dense(self.config["GRU_HIDDEN_DIM"] // 3, kernel_init=orthogonal(np.sqrt(2)), bias_init=constant(0.0))(obs)
-            actor_emb = nn.Dense(self.config["GRU_HIDDEN_DIM"] // 3, kernel_init=orthogonal(np.sqrt(2)), bias_init=constant(0.0))(obs)
-            critic_emb = nn.Dense(self.config["GRU_HIDDEN_DIM"] // 3, kernel_init=orthogonal(np.sqrt(2)), bias_init=constant(0.0))(obs)
-        # TODO theres no non lineariites??
+            embedding = nn.Dense(128, kernel_init=orthogonal(np.sqrt(2)), bias_init=constant(0.0))(obs)
+            embedding = nn.relu(embedding)
 
-        hidden_a, embedding_a = ScannedMFOSRNN()(hidden_a, (actor_emb, dones))
-        actor_mean = nn.Dense(self.action_dim, kernel_init=orthogonal(0.01), bias_init=constant(0.0))(th * embedding_a)
+        rnn_in = (embedding, dones)
+        hidden, embedding = ScannedRNN()(hidden, rnn_in)
+
+        actor_mean = nn.Dense(self.config["GRU_HIDDEN_DIM"], kernel_init=orthogonal(2), bias_init=constant(0.0))(
+            embedding)
+        actor_mean = nn.relu(actor_mean)
+        actor_mean = nn.Dense(self.action_dim, kernel_init=orthogonal(0.01), bias_init=constant(0.0))(actor_mean)
+
         pi = distrax.Categorical(logits=actor_mean)
 
-        hidden_c, embedding_c = ScannedMFOSRNN()(hidden_c, (critic_emb, dones))
-        critic = nn.Dense(1, kernel_init=orthogonal(1.0), bias_init=constant(0.0))(embedding_c)
+        critic = nn.Dense(128, kernel_init=orthogonal(2), bias_init=constant(0.0))(embedding)
+        critic = nn.relu(critic)
+        critic = nn.Dense(1, kernel_init=orthogonal(1.0), bias_init=constant(0.0))(critic)
 
-        hidden_t, embedding_t = ScannedMFOSRNN()(hidden_t, (meta_emb, dones))
-        current_th = nn.sigmoid(nn.Dense(self.config["GRU_HIDDEN_DIM"] // 3)(embedding_t))
-
-        hidden = jnp.concatenate([hidden_t, hidden_a, hidden_c], axis=-1)
-
-        # print(current_th)
-
-        return hidden, pi, jnp.squeeze(critic, axis=-1), actor_mean, current_th
+        return hidden, pi, jnp.squeeze(critic, axis=-1), actor_mean

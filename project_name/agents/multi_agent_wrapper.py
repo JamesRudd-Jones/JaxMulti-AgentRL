@@ -3,14 +3,14 @@ import jax.numpy as jnp
 import jax.random as jrandom
 from project_name.agents.agent_main import Agent
 import sys
-from ..utils import import_class_from_folder, batchify
+from ..utils import import_class_from_folder
 from functools import partial
 from typing import Any
 
 
 class MultiAgent(Agent):
-    def __init__(self, env, env_params, config, key):
-        super().__init__(env, env_params, config, key)
+    def __init__(self, env, env_params, config, utils, key):
+        super().__init__(env, env_params, config, utils, key)
         self.agent_list = {agent: None for agent in range(config.NUM_AGENTS)}  # TODO is there a better way to do this?
         self.mem_state_list = {agent: None for agent in range(config.NUM_AGENTS)}
         self.train_state_list = {agent: None for agent in range(config.NUM_AGENTS)}
@@ -33,9 +33,8 @@ class MultiAgent(Agent):
         value_n = jnp.zeros((self.config.NUM_AGENTS, self.config["NUM_ENVS"]))
         log_prob_n = jnp.zeros((self.config.NUM_AGENTS, self.config["NUM_ENVS"]))
         for agent in range(self.config.NUM_AGENTS):
-            ac_in = (obs_batch[jnp.newaxis, agent, :],
-                     last_done[jnp.newaxis, agent],
-                     )
+            ac_in = self.utils.ac_in(obs_batch, last_done, agent)  # TODO is this dodge?
+
             ind_mem_state, ind_action, ind_log_prob, ind_value, key = self.agent_list[agent].act(train_state[agent],
                                                                                                  mem_state[agent],
                                                                                                  ac_in, key)
@@ -61,38 +60,34 @@ class MultiAgent(Agent):
         return mem_state
 
     @partial(jax.jit, static_argnums=(0,))
-    def update(self, update_state: Any, trajectory_batch: Any):  # TODO add better chex
-        train_state, mem_state, env_state, last_obs, last_done, key = update_state
-        last_obs_batch = batchify(last_obs, range(self.config.NUM_AGENTS), self.config.NUM_AGENTS,
-                                  self.config["NUM_ENVS"])
+    def update(self, train_state: Any, mem_state: Any, env_state: Any, last_obs_batch: Any, last_done: Any, key: Any,
+               trajectory_batch: Any):
         for agent in range(self.config.NUM_AGENTS):  # TODO this is probs mega slowsies
             new_mem_state = jax.tree_map(lambda x: x[:, jnp.newaxis, :], trajectory_batch.mem_state[agent])
             individual_trajectory_batch = trajectory_batch._replace(mem_state=new_mem_state)  # TODO check this is fine
             individual_trajectory_batch = jax.tree_map(lambda x: x[:, agent], individual_trajectory_batch)
-            individual_train_state = (train_state[agent], mem_state[agent], env_state, last_obs_batch[agent, :],
-                                      last_done[agent], key)
+            ac_in = self.utils.ac_in(last_obs_batch, last_done, agent)  # TODO is this dodge?
+            individual_train_state = (train_state[agent], mem_state[agent], env_state, ac_in, key)
             individual_runner_list = self.agent_list[agent].update(individual_train_state, individual_trajectory_batch)
             train_state[agent] = individual_runner_list[0]
             mem_state[agent] = individual_runner_list[1]
             key = individual_runner_list[-1]
 
-        return train_state, mem_state, env_state, last_obs, last_done, key
+        return train_state, mem_state, env_state, last_obs_batch, last_done, key
 
-    @partial(jax.jit, static_argnums=(0,)) # TODO dodgy code is there a way to do better here
-    def meta_update(self, update_state: Any, trajectory_batch: Any):  # TODO add better chex
-        train_state, mem_state, env_state, last_obs, last_done, key = update_state
-        last_obs_batch = batchify(last_obs, range(self.config.NUM_AGENTS), self.config.NUM_AGENTS,
-                                  self.config["NUM_ENVS"])
+    @partial(jax.jit, static_argnums=(0,))  # TODO dodgy code is there a way to do better here
+    def meta_update(self, train_state: Any, mem_state: Any, env_state: Any, last_obs_batch: Any, last_done: Any,
+                    key: Any, trajectory_batch: Any):  # TODO add better chex
         for agent in range(self.config.NUM_AGENTS):  # TODO this is probs mega slowsies
             new_mem_state = jax.tree_map(lambda x: x[:, jnp.newaxis, :], trajectory_batch.mem_state[agent])
             individual_trajectory_batch = trajectory_batch._replace(mem_state=new_mem_state)  # TODO check this is fine
             individual_trajectory_batch = jax.tree_map(lambda x: x[:, agent], individual_trajectory_batch)
-            individual_train_state = (train_state[agent], mem_state[agent], env_state, last_obs_batch[agent, :],
-                                      last_done[agent], key)
+            ac_in = self.utils.ac_in(last_obs_batch, last_done, agent)  # TODO is this dodge?
+            individual_train_state = (train_state[agent], mem_state[agent], env_state, ac_in, key)
             individual_runner_list = self.agent_list[agent].meta_update(individual_train_state,
                                                                         individual_trajectory_batch)
             train_state[agent] = individual_runner_list[0]
             mem_state[agent] = individual_runner_list[1]
             key = individual_runner_list[-1]
 
-        return train_state, mem_state, env_state, last_obs, last_done, key
+        return train_state, mem_state, env_state, last_obs_batch, last_done, key
