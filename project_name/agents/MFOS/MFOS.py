@@ -3,15 +3,16 @@ import jax.numpy as jnp
 import jax.random as jrandom
 import optax
 from typing import Any, Dict, Mapping, NamedTuple, Tuple
-from .network import ActorCriticMFOSRNN, ScannedRNN
+from project_name.agents.MFOS.network import ActorCriticMFOSRNN, ScannedMFOSRNN
 from flax.training.train_state import TrainState
 from functools import partial
+import sys
 
 
 class MemoryState(NamedTuple):
     """State consists of network extras (to be batched)"""
 
-    hidden: jnp.ndarray
+    hstate: jnp.ndarray
     th: jnp.ndarray
     curr_th: jnp.ndarray
     extras: Mapping[str, jnp.ndarray]
@@ -34,10 +35,11 @@ class MFOSAgent:
                   )
         # TODO think need some elements for the meta inputs?
         key, _key = jrandom.split(key)
-        init_hstate = ScannedRNN.initialize_carry(config["NUM_ENVS"], config.GRU_HIDDEN_DIM)  # TODO remove this
-        self.network_params = self.network.init(_key, init_hstate, init_x)
-        self.init_hstate = ScannedRNN.initialize_carry(config["NUM_ENVS"],
-                                                       config["GRU_HIDDEN_DIM"])  # TODO do we need both?
+        init_hstate = ScannedMFOSRNN.initialize_carry(config["NUM_ENVS"], config.GRU_HIDDEN_DIM)  # TODO remove this
+        init_th = jnp.zeros((1, config.NUM_ENVS, config.GRU_HIDDEN_DIM // 3))
+        self.network_params = self.network.init(_key, init_hstate, init_x, init_th)
+        self.init_hstate = ScannedMFOSRNN.initialize_carry(config["NUM_ENVS"],
+                                                           config["GRU_HIDDEN_DIM"])  # TODO do we need both?
 
         def linear_schedule(count):  # TODO put this somewhere better
             frac = (1.0 - (count // (config["NUM_MINIBATCHES"] * config["UPDATE_EPOCHS"])) / config["NUM_UPDATES"])
@@ -56,22 +58,22 @@ class MFOSAgent:
         return (TrainState.create(apply_fn=self.network.apply,
                                   params=self.network_params,
                                   tx=self.tx),
-                MemoryState(hidden=self.init_hstate,
+                MemoryState(hstate=self.init_hstate,
                             th=jnp.ones((self.config.NUM_ENVS, self.config.GRU_HIDDEN_DIM // 3)),
                             curr_th=jnp.ones((self.config.NUM_ENVS, self.config.GRU_HIDDEN_DIM // 3)),
                             extras={
-                                "values": jnp.zeros(self.config.NUM_ENVS),
-                                "log_probs": jnp.zeros(self.config.NUM_ENVS),
-                            },),
+                                "values": jnp.zeros((self.config.NUM_ENVS, 1)),
+                                "log_probs": jnp.zeros((self.config.NUM_ENVS, 1)),
+                            }, ),
                 )
 
     @partial(jax.jit, static_argnums=(0,))
     def reset_memory(self, mem_state):
-        mem_state = mem_state.replace(extras={
-                "values": jnp.zeros(self.config.NUM_ENVS),
-                "log_probs": jnp.zeros(self.config.NUM_ENVS),
-            },
-            hidden=jnp.zeros((self.config.NUM_ENVS, self.config.GRU_HIDDEN_DIM)),
+        mem_state = mem_state._replace(extras={
+            "values": jnp.zeros((self.config.NUM_ENVS, 1)),
+            "log_probs": jnp.zeros((self.config.NUM_ENVS, 1)),
+        },
+            hstate=jnp.zeros((self.config.NUM_ENVS, self.config.GRU_HIDDEN_DIM)),
             th=jnp.ones((self.config.NUM_ENVS, self.config.GRU_HIDDEN_DIM // 3)),
             curr_th=jnp.ones((self.config.NUM_ENVS, self.config.GRU_HIDDEN_DIM // 3)),
         )
@@ -82,36 +84,40 @@ class MFOSAgent:
         mem_state = mem_state._replace(th=mem_state.curr_th)
 
         # reset memory of agent
-        mem_state = mem_state._replace(hidden=jnp.zeros_like(mem_state.hidden),
-            curr_th=jnp.ones_like(mem_state.curr_th),
-        )
+        mem_state = mem_state._replace(hstate=jnp.zeros_like(mem_state.hstate),
+                                       curr_th=jnp.ones_like(mem_state.curr_th),
+                                       )
 
         return mem_state
 
     @partial(jax.jit, static_argnums=(0,))
     def act(self, train_state: Any, mem_state: Any, ac_in: Any, key: Any):  # TODO better implement checks
-        hstate, pi, value, action_logits, curr_th = train_state.apply_fn(train_state.params, mem_state.hstate, ac_in)
+        hstate, pi, value, action_logits, curr_th = train_state.apply_fn(train_state.params, mem_state.hstate, ac_in,
+                                                                         mem_state.th)
         key, _key = jrandom.split(key)
         action = pi.sample(seed=_key)
         log_prob = pi.log_prob(action)
 
-        mem_state.extras["values"] = value
-        mem_state.extras["log_probs"] = log_prob  # TODO sort this out a bit
+        mem_state.extras["values"] = jnp.swapaxes(value, 0, 1)
+        mem_state.extras["log_probs"] = jnp.swapaxes(log_prob, 0, 1)  # TODO sort this out a bit
 
-        mem_state = mem_state.replace(hidden=hstate, curr_th=curr_th, extras=mem_state.extras)
+        mem_state = mem_state._replace(hstate=hstate, curr_th=jnp.squeeze(curr_th, axis=0), extras=mem_state.extras)
 
-        return mem_state, action, log_prob, value, key, action_logits, _key  # TODO do we need to return key?
+        return mem_state, action, log_prob, value, key
 
     @partial(jax.jit, static_argnums=(0,))
     def update(self, runner_state, traj_batch):
+        train_state, mem_state, env_state, last_obs, last_done, key = runner_state
+        return train_state, mem_state, env_state, last_obs, last_done, key
+
+    @partial(jax.jit, static_argnums=(0,))
+    def meta_update(self, runner_state, traj_batch):
         # CALCULATE ADVANTAGE
-        train_state, env_state, last_obs, last_done, mem_state, key = runner_state
-        # avail_actions = jnp.ones(self.env.action_space(self.env.agents[0]).n)
+        train_state, mem_state, env_state, last_obs, last_done, key = runner_state
         ac_in = (last_obs[jnp.newaxis, :],
                  last_done[jnp.newaxis, :],
-                 # avail_actions[jnp.newaxis, :],
                  )
-        _, _, last_val, _, _ = train_state.apply_fn(train_state.params, mem_state.hstate, ac_in)
+        _, _, last_val, _, _ = train_state.apply_fn(train_state.params, mem_state.hstate, ac_in, mem_state.th)
         last_val = last_val.squeeze()
 
         def _calculate_gae(traj_batch, last_val):
@@ -140,15 +146,16 @@ class MFOSAgent:
             def _update_minbatch(train_state, batch_info):
                 init_hstate, traj_batch, advantages, targets = batch_info
 
-                def _loss_fn(params, traj_batch, gae, targets):
+                def _loss_fn(params, init_hstate, traj_batch, gae, targets):
                     # RERUN NETWORK
                     _, pi, value, _, _ = train_state.apply_fn(params,
-                                                           init_hstate.squeeze(axis=0),
-                                                        (traj_batch.obs,
-                                                         traj_batch.done,
-                                                         # traj_batch.avail_actions
-                                                         ),
-                                                        )
+                                                              init_hstate.squeeze(axis=0),
+                                                              (traj_batch.obs,
+                                                               traj_batch.done,
+                                                               # traj_batch.avail_actions
+                                                               ),
+                                                              traj_batch.mem_state.th
+                                                              )
                     log_prob = pi.log_prob(traj_batch.action)
 
                     # CALCULATE VALUE LOSS
@@ -183,11 +190,11 @@ class MFOSAgent:
                 train_state = train_state.apply_gradients(grads=grads)
                 return train_state, total_loss
 
-            train_state, init_hstate, traj_batch, advantages, targets, key = update_state
+            train_state, mem_state, traj_batch, advantages, targets, key = update_state
             key, _key = jrandom.split(key)
 
             # adding an additional "fake" dimensionality to perform minibatching correctly
-            init_hstate = jnp.reshape(init_hstate, (1, self.config["NUM_ENVS"], -1))
+            init_hstate = jnp.reshape(mem_state.hstate, (1, self.config["NUM_ENVS"], -1))
 
             permutation = jrandom.permutation(_key, self.config["NUM_ENVS"])
             traj_batch = jax.tree_map(lambda x: jnp.swapaxes(x, 0, 1), traj_batch)
@@ -196,7 +203,6 @@ class MFOSAgent:
                      jnp.swapaxes(advantages, 0, 1).squeeze(),
                      jnp.swapaxes(targets, 0, 1).squeeze())
             shuffled_batch = jax.tree_util.tree_map(lambda x: jnp.take(x, permutation, axis=1), batch)
-
             minibatches = jax.tree_util.tree_map(lambda x: jnp.swapaxes(
                 jnp.reshape(x, [x.shape[0], self.config["NUM_MINIBATCHS"], -1] + list(x.shape[2:]), ), 1, 0, ),
                                                  shuffled_batch, )
@@ -206,7 +212,7 @@ class MFOSAgent:
             traj_batch = jax.tree_map(lambda x: jnp.swapaxes(x, 0, 1), traj_batch)  # TODO dodge to swap back again
 
             update_state = (train_state,
-                            init_hstate.squeeze(),
+                            mem_state,
                             traj_batch,
                             advantages,
                             targets,
@@ -214,10 +220,9 @@ class MFOSAgent:
                             )
             return update_state, total_loss
 
-        update_state = (train_state, mem_state.hstate, traj_batch, advantages, targets, key)
+        update_state = (train_state, mem_state, traj_batch, advantages, targets, key)
         update_state, loss_info = jax.lax.scan(_update_epoch, update_state, None, self.config["UPDATE_EPOCHS"])
-        train_state, hstate, traj_batch, advantages, targets, key = update_state
+        train_state, mem_state, traj_batch, advantages, targets, key = update_state
+        # TODO unsure if need to update the mem_state at all with the new hstate thingos
 
-        mem_state.replace(hidden=hstate)  # TODO unsure if need this but double check
-
-        return train_state, env_state, last_obs, last_done, mem_state, key
+        return train_state, mem_state, env_state, last_obs, last_done, key

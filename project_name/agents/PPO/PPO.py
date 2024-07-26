@@ -44,12 +44,26 @@ class PPOAgent:
         return (TrainState.create(apply_fn=self.network.apply,
                                   params=self.network_params,
                                   tx=self.tx),
-                MemoryState(hidden=jnp.zeros((self.config.NUM_ENVS, 1)),
+                MemoryState(hstate=jnp.zeros((self.config.NUM_ENVS, 1)),
                             extras={
-                                "values": jnp.zeros(self.config.NUM_ENVS),
-                                "log_probs": jnp.zeros(self.config.NUM_ENVS),
+                                "values": jnp.zeros((self.config.NUM_ENVS, 1)),
+                                "log_probs": jnp.zeros((self.config.NUM_ENVS, 1)),
                             })
                 )
+
+    @partial(jax.jit, static_argnums=(0,))
+    def reset_memory(self, mem_state):
+        mem_state = mem_state._replace(extras={
+            "values": jnp.zeros((self.config.NUM_ENVS, 1)),
+            "log_probs": jnp.zeros((self.config.NUM_ENVS, 1)),
+        },
+            hstate=jnp.zeros((self.config.NUM_ENVS, 1)),
+        )
+        return mem_state
+
+    @partial(jax.jit, static_argnums=(0,))
+    def meta_policy(self, mem_state):
+        return mem_state
 
     @partial(jax.jit, static_argnums=(0))
     def act(self, train_state: Any, mem_state: Any, ac_in: Any, key: Any):  # TODO better implement checks
@@ -58,12 +72,12 @@ class PPOAgent:
         action = pi.sample(seed=_key)
         log_prob = pi.log_prob(action)
 
-        return mem_state, action, log_prob, value, key, action_logits, _key  # TODO do we need to return key?
+        return mem_state, action, log_prob, value, key
 
     @partial(jax.jit, static_argnums=(0))
     def update(self, runner_state, traj_batch):
         # CALCULATE ADVANTAGE
-        train_state, env_state, last_obs, last_done, mem_state, key = runner_state
+        train_state, mem_state, env_state, last_obs, last_done, key = runner_state
         # avail_actions = jnp.ones(self.env.action_space(self.env.agents[0]).n)
         ac_in = (last_obs[jnp.newaxis, :],
                  last_done[jnp.newaxis, :],
@@ -96,7 +110,7 @@ class PPOAgent:
 
         def _update_epoch(update_state, unused):
             def _update_minbatch(train_state, batch_info):
-                init_mem_state, traj_batch, advantages, targets = batch_info
+                traj_batch, advantages, targets = batch_info
 
                 def _loss_fn(params, traj_batch, gae, targets):
                     # RERUN NETWORK
@@ -140,16 +154,12 @@ class PPOAgent:
                 train_state = train_state.apply_gradients(grads=grads)
                 return train_state, total_loss
 
-            train_state, init_mem_state, traj_batch, advantages, targets, key = update_state
+            train_state, traj_batch, advantages, targets, key = update_state
             key, _key = jrandom.split(key)
-
-            # # adding an additional "fake" dimensionality to perform minibatching correctly
-            # init_mem_state = jnp.reshape(init_mem_state, (1, self.config["NUM_ENVS"], -1))
 
             permutation = jrandom.permutation(_key, self.config["NUM_ENVS"])
             traj_batch = jax.tree_map(lambda x: jnp.swapaxes(x, 0, 1), traj_batch)
-            batch = (init_mem_state,  # TODO check this axis swapping etc if it works
-                     traj_batch,
+            batch = (traj_batch,
                      jnp.swapaxes(advantages, 0, 1).squeeze(),
                      jnp.swapaxes(targets, 0, 1).squeeze())
             shuffled_batch = jax.tree_util.tree_map(lambda x: jnp.take(x, permutation, axis=1), batch)
@@ -163,7 +173,6 @@ class PPOAgent:
             traj_batch = jax.tree_map(lambda x: jnp.swapaxes(x, 0, 1), traj_batch)  # TODO dodge to swap back again
 
             update_state = (train_state,
-                            init_mem_state,
                             traj_batch,
                             advantages,
                             targets,
@@ -171,8 +180,14 @@ class PPOAgent:
                             )
             return update_state, total_loss
 
-        update_state = (train_state, mem_state, traj_batch, advantages, targets, key)
+        update_state = (train_state, traj_batch, advantages, targets, key)
         update_state, loss_info = jax.lax.scan(_update_epoch, update_state, None, self.config["UPDATE_EPOCHS"])
-        train_state, mem_state, traj_batch, advantages, targets, key = update_state
+        train_state, traj_batch, advantages, targets, key = update_state
 
-        return train_state, env_state, last_obs, last_done, mem_state, key
+        return train_state, mem_state, env_state, last_obs, last_done, key
+
+    @partial(jax.jit, static_argnums=(0,))
+    def meta_update(self, runner_state, traj_batch):
+        train_state, mem_state, env_state, last_obs, last_done, key = runner_state
+        return train_state, mem_state, env_state, last_obs, last_done, key
+

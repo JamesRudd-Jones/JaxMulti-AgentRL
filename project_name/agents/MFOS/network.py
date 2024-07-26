@@ -12,7 +12,7 @@ import seaborn as sns
 import matplotlib.pyplot as plt
 
 
-class ScannedRNN(nn.Module):
+class ScannedMFOSRNN(nn.Module):
     @functools.partial(nn.scan,
                        variable_broadcast="params",
                        in_axes=0,
@@ -44,7 +44,7 @@ class ActorCriticMFOSRNN(nn.Module):
     config: Dict
 
     @nn.compact
-    def __call__(self, hidden, x):
+    def __call__(self, hidden, x, th):
         obs, dones = x
         hidden_t, hidden_a, hidden_c = jnp.split(hidden, 3, axis=-1)  # TODO check this ting I guess
 
@@ -56,16 +56,18 @@ class ActorCriticMFOSRNN(nn.Module):
         critic_emb = nn.Dense(128, kernel_init=orthogonal(np.sqrt(2)), bias_init=constant(0.0))(obs)
         # TODO theres no non lineariites??
 
-        hidden_a, embedding_a = ScannedRNN()(hidden_a, (actor_emb, dones))
-        actor_mean = nn.Dense(self.action_dim, kernel_init=orthogonal(0.01), bias_init=constant(0.0))(embedding_a)
+        hidden_a, embedding_a = ScannedMFOSRNN()(hidden_a, (actor_emb, dones))
+        actor_mean = nn.Dense(self.action_dim, kernel_init=orthogonal(0.01), bias_init=constant(0.0))(th * embedding_a)
         pi = distrax.Categorical(logits=actor_mean)
 
-        hidden_c, embedding_c = ScannedRNN()(hidden_c, (critic_emb, dones))
+        hidden_c, embedding_c = ScannedMFOSRNN()(hidden_c, (critic_emb, dones))
         critic = nn.Dense(1, kernel_init=orthogonal(1.0), bias_init=constant(0.0))(embedding_c)
 
-        hidden_t, embedding_t = ScannedRNN()(hidden_t, (meta_emb, dones))
-        current_th = nn.sigmoid(nn.Dense(128)(embedding_t))
+        hidden_t, embedding_t = ScannedMFOSRNN()(hidden_t, (meta_emb, dones))
+        current_th = nn.sigmoid(nn.Dense(self.config["GRU_HIDDEN_DIM"] // 3)(embedding_t))
 
         hidden = jnp.concatenate([hidden_t, hidden_a, hidden_c], axis=-1)
+
+        # print(current_th)
 
         return hidden, pi, jnp.squeeze(critic, axis=-1), actor_mean, current_th
