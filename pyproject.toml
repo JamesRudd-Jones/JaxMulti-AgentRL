@@ -4,6 +4,7 @@ version = "0.1.0"
 description = "Default template for PDM package"
 authors = [
     {name = "jamesrj_desktop", email = "james.rudd.jones@gmail.com"},
+    {name = "jamesrj", email = "james.rudd-jones.22@ucl.ac.uk"},
 ]
 dependencies = [
     "absl-py>=2.1.0",
@@ -26,23 +27,21 @@ requires-python = "==3.10.*"
 readme = "README.md"
 license = {text = "MIT"}
 
-[build-system]
-requires = ["pdm-backend"]
-build-backend = "pdm.backend"
-
+ [tool.pdm]
+ distribution = false
  [[tool.pdm.source]]
  name = "jax_cuda"
  url = "https://storage.googleapis.com/jax-releases/jax_cuda_releases.html"
  verify_ssl = true
  type = "find_links"
 
-                                                        [tool.pdm.scripts]
+                                                         [tool.pdm.scripts]
 test.cmd = "pytest -n auto --maxprocesses 8 --dist loadfile"
 # test.env = { JAX_PLATFORM_NAME = "cpu", JAX_DISABLE_MOST_OPTIMIZATIONS = "1" }
 lint.shell = "ruff . && black --check ."
 fmt.shell = "ruff --fix . && black ."
 
-                                                             [tool.pdm.dev-dependencies]
+                                                              [tool.pdm.dev-dependencies]
 dev = [
     "lxm3>=0.4.0",
     "ruff>=0.1.11",
