@@ -22,7 +22,7 @@ class ActorCriticPR2(nn.Module):  # TODO change this and remove RNN
         else:
             activation = nn.tanh
 
-        obs, dones = x
+        obs, dones = x  # TODO some how obs also has actions and opponent actions included
         embedding = nn.Dense(128, kernel_init=orthogonal(np.sqrt(2)), bias_init=constant(0.0))(obs)
         embedding = activation(embedding)
         embedding = nn.Dense(128, kernel_init=orthogonal(np.sqrt(2)), bias_init=constant(0.0))(embedding)
