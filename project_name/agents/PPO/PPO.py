@@ -75,8 +75,7 @@ class PPOAgent:
         return mem_state, action, log_prob, value, key
 
     @partial(jax.jit, static_argnums=(0))
-    def update(self, runner_state, agent, traj_batch):
-        traj_batch = jax.tree_map(lambda x: x[:, agent], traj_batch)
+    def update(self, runner_state, traj_batch):
         # CALCULATE ADVANTAGE
         train_state, mem_state, env_state, last_obs, last_done, key = runner_state
         # avail_actions = jnp.ones(self.env.action_space(self.env.agents[0]).n)
@@ -188,7 +187,7 @@ class PPOAgent:
         return train_state, mem_state, env_state, last_obs, last_done, key
 
     @partial(jax.jit, static_argnums=(0,))
-    def meta_update(self, runner_state, agent, traj_batch):
+    def meta_update(self, runner_state, traj_batch):
         train_state, mem_state, env_state, last_obs, last_done, key = runner_state
         return train_state, mem_state, env_state, last_obs, last_done, key
 
