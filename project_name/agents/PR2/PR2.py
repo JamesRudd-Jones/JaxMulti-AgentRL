@@ -4,17 +4,24 @@ import jax.numpy as jnp
 from typing import Any
 import jax.random as jrandom
 from functools import partial
-from project_name.agents.PR2.network import ActorCriticPR2  # TODO sort out this class import ting
+from project_name.agents.PR2.network import ActorPR2, CriticPR2, OppNetworkPR2  # TODO sort out this class import ting
 import optax
 from flax.training.train_state import TrainState
 from project_name.utils import MemoryState
 import flashbax as fbx
 from typing import NamedTuple
+import flax
 
 
-# class TrainStatePR2(TrainState):
-#     train_state: TrainState
-#     buffer_state: Any
+class TrainStateExt(TrainState):
+    target_params: flax.core.FrozenDict
+
+
+class TrainStatePR2(NamedTuple):  # TODO is this correct tag?
+    critic_state: TrainStateExt
+    actor_state: TrainStateExt
+    opp_state: TrainState
+
 
 class TransitionPR2(NamedTuple):
     done: jnp.ndarray
@@ -32,7 +39,10 @@ class PR2Agent:
         self.config = config
         self.env = env
         self.env_params = env_params
-        self.network = ActorCriticPR2(action_dim=env.action_space(env_params).n)
+        self.critic_network = CriticPR2(config=config)
+        self.actor_network = ActorPR2(action_dim=env.action_space(env_params).n,
+                                      config=config)
+        self.opp_network = OppNetworkPR2(action_dim=config.NUM_AGENTS - 1, config=config)
 
         key, _key = jrandom.split(key)
 
@@ -40,7 +50,12 @@ class PR2Agent:
                   jnp.zeros((1, config.NUM_ENVS)),
                   )
 
-        self.network_params = self.network.init(_key, init_x)
+        self.critic_network_params = self.critic_network.init(_key, init_x,
+                                                                     jnp.zeros((1, config.NUM_ENVS, 1)),
+                                                                     jnp.zeros((1, config.NUM_ENVS, config.NUM_AGENTS - 1)))
+        self.actor_network_params = self.actor_network.init(_key, init_x)
+        self.opp_network_params = self.opp_network.init(_key, jnp.zeros((1, config.NUM_ENVS, env.observation_space(env_params).n)),
+                                                        jnp.zeros((1, config.NUM_ENVS, 1)))
 
         self.per_buffer = fbx.make_prioritised_flat_buffer(max_length=config.BUFFER_SIZE,
                                                            min_length=config.BATCH_SIZE,
@@ -49,6 +64,12 @@ class PR2Agent:
                                                            add_batch_size=None,
                                                            priority_exponent=config.REPLAY_PRIORITY_EXP,
                                                            device=config.DEVICE)
+
+        self.per_buffer = self.per_buffer.replace(init=jax.jit(self.per_buffer.init),
+            add=jax.jit(self.per_buffer.add, donate_argnums=0),
+            sample=jax.jit(self.per_buffer.sample),
+            can_sample=jax.jit(self.per_buffer.can_sample),
+        )
 
         def linear_schedule(count):  # TODO put this somewhere better
             frac = (1.0 - (count // (config["NUM_MINIBATCHES"] * config["UPDATE_EPOCHS"])) / config["NUM_UPDATES"])
@@ -64,14 +85,23 @@ class PR2Agent:
                                   )
 
     def create_train_state(self):
-        return (TrainState.create(apply_fn=self.network.apply,
-                                  params=self.network_params,
+        return (TrainStatePR2(critic_state=TrainStateExt.create(apply_fn=self.critic_network.apply,
+                                  params=self.critic_network_params,
+                                     target_params=self.critic_network_params,
                                   tx=self.tx),
+                actor_state=TrainStateExt.create(apply_fn=self.actor_network.apply,
+                                  params=self.actor_network_params,
+                                     target_params=self.actor_network_params,
+                                  tx=self.tx),
+                              opp_state=TrainState.create(apply_fin=self.opp_network.apply,
+                                                          params=self.opp_network_params,
+                                                          tx=self.tx)),
                 self.per_buffer.init(
-                    TransitionPR2(done=jnp.zeros((1), dtype=bool),
-                                  action=jnp.zeros((self.config.NUM_AGENTS)),
-                                  reward=jnp.zeros((1)),
-                                  obs=jnp.zeros((env.observation_space(env_params).n)),
+                    TransitionPR2(done=jnp.zeros((self.config.NUM_ENVS), dtype=bool),
+                                  action=jnp.zeros((self.config.NUM_AGENTS, self.config.NUM_ENVS), dtype=jnp.int32),
+                                  reward=jnp.zeros((self.config.NUM_ENVS)),
+                                  obs=jnp.zeros((self.config.NUM_ENVS, self.env.observation_space(self.env_params).n), dtype=jnp.int8),
+                                  # TODO is it always an int for the obs?
                                   )))
 
     @partial(jax.jit, static_argnums=(0,))
@@ -82,107 +112,133 @@ class PR2Agent:
     def meta_policy(self, mem_state):
         return mem_state
 
-    @partial(jax.jit, static_argnums=(0))
+    @partial(jax.jit, static_argnums=(0,))
     def act(self, train_state: Any, mem_state: Any, ac_in: Any, key: Any):  # TODO better implement checks
-        pi, value, action_logits = train_state.apply_fn(train_state.params, ac_in)
+        pi, action_logits = train_state.actor_state.apply_fn(train_state.actor_state.params, ac_in)  # TODO should this be target params or actual params?
+        # value = train_state.critic_state.apply_fn(train_state.critic_state.params, ac_in)  # TODO same as above
+        value = jnp.zeros((1))  # TODO don't need to track it for PR2 update but double check
         key, _key = jrandom.split(key)
         action = pi.sample(seed=_key)
         log_prob = pi.log_prob(action)
 
         return mem_state, action, log_prob, value, key
 
-    @partial(jax.jit, static_argnums=(0))
+    @partial(jax.jit, static_argnums=(0, 2))
     def update(self, runner_state, agent, traj_batch):
-        train_state, mem_state, env_state, last_obs, last_done, key = runner_state
+        train_state, mem_state, env_state, ac_in, key = runner_state
 
-        # TODO convert traj_batch to buffer and then do sampling here etc, keeps on policy loop but works for our requirements
-        print(traj_batch)
-        sys.exit()
-
-        mem_state = self.per_buffer.add(mem_state, TransitionNoInfo(done=trajectory_batch.done[:, agent],
-                                                                    action=trajectory_batch.action,
-                                                                    reward=trajectory_batch.reward[:, agent],
-                                                                    obs=trajectory_batch.obs[:, agent],
+        mem_state = self.per_buffer.add(mem_state, TransitionPR2(done=traj_batch.done[:, agent, :],
+                                                                    action=traj_batch.action,
+                                                                    reward=traj_batch.reward[:, agent, :],
+                                                                    obs=traj_batch.obs[:, agent, :],
                                                                     ))
-
-        # traj_batch = jax.tree_map(lambda x: x[:, agent], traj_batch)
 
         key, _key = jrandom.split(key)
         batch = self.per_buffer.sample(mem_state, _key)
 
         # CRITIC training
-        def _loss_fn(params, target_params, batch, key):
-            obs = batch.experience.first.state
+        def _critic_loss(critic_target_params, critic_params, batch, key):
+            obs = batch.experience.first.obs
             action = batch.experience.first.action
             reward = batch.experience.first.reward
             done = batch.experience.first.done
-            nobs = batch.experience.second.state
+            nobs = batch.experience.second.obs
+            naction = batch.experience.second.action
             ndone = batch.experience.second.done
 
-            # critic part
-            nobs_in = (nobs[jnp.newaxis, agent, :],  # TODO generalise this to cnn stuff
-                       ndone[jnp.newaxis, agent],
-                       )
+            def remove_element(arr, index):  # TODO can improve?
+                if arr.shape[-1] == 1:
+                    raise ValueError("Cannot remove element from an array of size 1")
+                elif arr.shape[-1] == 2:
+                    return jnp.expand_dims(arr[:, :, 1 - index], -1)
+                else:
+                    return jnp.concatenate([arr[:, :, :index], arr[:, :, index + 1:]])
 
-            _, ego_action, _, _, key = self.act(train_state, mem_state, nobs_in, key)
+            naction = jnp.swapaxes(naction, 1, 2)
+            naction_ego = jnp.expand_dims(naction[:, :, agent], -1)
+            naction_opp = remove_element(naction, agent)
 
-            _, nvalue, _ = train_state.apply_fn(train_state.target_params, nobs_in)
+            # pi, action_logits = train_state.actor_state.apply_fn(actor_target_params, (nobs, jnp.expand_dims(ndone, axis=-1)))
+            # naction_ego = jnp.expand_dims(pi.sample(seed=key), -1)
+            # naction_opp = jnp.ones_like(naction_ego)  # TODO in paper it assumes this as a diff, however do we not have them all?
 
-            # _, _, next_state_log_pi, next_state_action_probs, key = self.act(train_state, nobs, key)
-            #
-            # qf_next_target = self.critic_network.apply(critic_target_params, nobs)
+            nvalue = train_state.critic_state.apply_fn(critic_target_params, (nobs, jnp.expand_dims(ndone, axis=-1)),
+                                                                                                naction_ego,
+                                                                                                naction_opp)
 
-            qf_next_target = jnp.mean(nvalue, axis=1, keepdims=True)  # TODO over dimension m but idk what this is
+            # q_next_target = jnp.mean(nvalue, axis=1, keepdims=True)  # TODO over dimension m but idk what this is
+            q_next_target = nvalue
 
-            next_q_value = reward + (1 - done) * self.config.GAMMA * (qf_next_target)
+            next_q_value = reward + (1 - done) * self.config.GAMMA * (q_next_target)  # TODO done or ndone?
 
             # use Q-values only for the taken actions
-            obs_in = (nobs[jnp.newaxis, agent, :],  # TODO generalise this to cnn stuff
-                       ndone[jnp.newaxis, agent],
-                       )
-            _, value, _ = train_state.apply_fn(train_state.params, nobs_in)
+            action = jnp.swapaxes(action, 1, 2)
+            action_ego = jnp.expand_dims(action[:, :, agent], -1)
+            action_opp = remove_element(action, agent)
 
-            # mse loss below
-            critic_loss = 0.5 * jnp.mean(jnp.square(value - next_q_value ))  # TODO check this is okay?
+            value = train_state.critic_state.apply_fn(critic_params, (obs, jnp.expand_dims(done, axis=-1)),
+                                                                                        action_ego,
+                                                                                        action_opp)
 
-            # actor part
-            obs_in = (obs[jnp.newaxis, agent, :],  # TODO generalise this to cnn stuff
-                       done[jnp.newaxis, agent],
-                       )
+            critic_loss = 0.5 * jnp.mean(jnp.square(value - next_q_value))  # TODO check this is okay?
 
-            _, ego_action, _, _, key = self.act(train_state, mem_state, obs_in, key)
+            return critic_loss
 
-            _, log_pi, action_probs, _ = self.act(actor_params, obs, key)
-
-            # return jnp.mean(action_probs * ((self.config.ALPHA * log_pi) - min_qf_values))
-
-            total_loss = critic_loss + actor_loss  # TODO maybe better to separate
-
-            return totaL_loss, (critic_loss, actor_loss)
-
-        (critic_loss, new_priorities), grads = jax.value_and_grad(_loss_fn, has_aux=True)(
-            actor_state.params,
-            critic_state.params,
-            critic_state.target_params,
-            batch,
-            key
+        key, _key = jrandom.split(key)
+        critic_loss, grads = jax.value_and_grad(_critic_loss, argnums=1)(# train_state.actor_state.target_params,
+                                                                train_state.critic_state.target_params,
+                                                                train_state.critic_state.params,
+                                                                batch,
+                                                                _key
         )
 
         # rb.update_priority(abs_td)
-        buffer_state = self.per_buffer.set_priorities(buffer_state, batch.indices, new_priorities)
+        # buffer_state = self.per_buffer.set_priorities(buffer_state, batch.indices, new_priorities)
+        # print(train_state.critic_state)
+        # print(grads)
 
-        critic_state = critic_state.apply_gradients(grads=grads)
+        train_state = train_state._replace(critic_state=train_state.critic_state.apply_gradients(grads=grads))  # TODO check this works
 
-        actor_loss, grads = jax.value_and_grad(actor_loss)(actor_state.params,
-                                                           critic_state.params,
+        def _actor_loss(actor_params, critic_params, opp_params, batch, key):
+            obs = batch.experience.first.obs
+            action = batch.experience.first.action
+            reward = batch.experience.first.reward
+            done = batch.experience.first.done
+            nobs = batch.experience.second.obs
+            naction = batch.experience.second.action
+            ndone = batch.experience.second.done
+
+            # actor part
+            pi, action_logits = train_state.actor_state.apply_fn(actor_params, (obs, jnp.expand_dims(done, axis=-1)))  # TODO remove done part at some point as not needed
+            action_ego = jnp.expand_dims(pi.sample(seed=key), -1)
+            action_opp = train_state.opp_state.apply_fn(opp_params, (obs, action_ego))
+
+            q_target = train_state.critic_state.apply_fn(critic_params, (nobs, jnp.expand_dims(ndone, axis=-1)),
+                                                                                        action_ego,
+                                                                                        action_opp)
+
+            return jnp.mean(q_target)
+
+        actor_loss, grads = jax.value_and_grad(_actor_loss, argnums=0)(train_state.actor_state.params,
+                                                           train_state.critic_state.params,
+                                                                       train_state.opp_state.params,
                                                            batch,
                                                            key
                                                            )
-        actor_state = actor_state.apply_gradients(grads=grads)
+        train_state = train_state._replace(actor_state=train_state.actor_state.apply_gradients(grads=grads))
 
-        return train_state, mem_state, env_state, last_obs, last_done, key
+        def opp_policy_loss(batch, key):
+            action = batch.experience.first.action
+
+            action_ego = jnp.expand_dims(action[:, :, agent], -1)
+
+            action_opp = train_state.opp_state.apply_fn(opp_params, (obs, action_ego))
+
+            return
+
+        return train_state, mem_state, env_state, ac_in, key
 
     @partial(jax.jit, static_argnums=(0,))
     def meta_update(self, runner_state, agent, traj_batch):
-        train_state, mem_state, env_state, last_obs, last_done, key = runner_state
-        return train_state, mem_state, env_state, last_obs, last_done, key
+        train_state, mem_state, env_state, ac_in, key = runner_state
+        return train_state, mem_state, env_state, ac_in, key

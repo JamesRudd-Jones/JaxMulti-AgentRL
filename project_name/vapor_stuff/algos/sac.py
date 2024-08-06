@@ -13,6 +13,7 @@ from flax.training.train_state import TrainState
 import optax
 import flashbax as fbx
 from project_name.vapor_stuff.utils import TransitionNoInfo
+import sys
 
 
 class TrainStateCritic(TrainState):  # TODO check gradients do not update target_params
@@ -73,8 +74,12 @@ class SAC:
         logits = self.actor_network.apply(actor_params, obs)
         policy_dist = distrax.Categorical(logits=logits)
         action = policy_dist.sample(seed=_key)
-        log_prob = policy_dist.log_prob(action)
+        # log_prob = policy_dist.log_prob(action)
         action_probs = policy_dist.probs
+
+        z = action_probs == 0.0
+        z = z * 1e-8
+        log_prob = jnp.log(action_probs + z)
 
         return action, log_prob, action_probs, key
 
@@ -133,9 +138,9 @@ class SAC:
             qf_loss = jnp.mean(importance_weights * qf_loss)
             new_priorities = jnp.abs(td_error) + 1e-7
 
-            return qf_loss, new_priorities[:, 0]  # to remove the last dimensions of new_priorities  # TODO again unsure if gradietns are okay but maybe fine cus has_aux
+            return qf_loss, new_priorities[:, 0]  # to remove the last dimensions of new_priorities
 
-        (critic_loss, new_priorities), grads = jax.value_and_grad(critic_loss, has_aux=True)(
+        (critic_loss, new_priorities), grads = jax.value_and_grad(critic_loss, argnums=1, has_aux=True)(
             actor_state.params,
             critic_state.params,
             critic_state.target_params,
@@ -155,9 +160,9 @@ class SAC:
 
             _, log_pi, action_probs, _ = self.act(actor_params, obs, key)
 
-            return jnp.mean(action_probs * ((self.config.ALPHA * log_pi) - min_qf_values))  # TODO dont think this is right regarding value and grad as there is no loss as well? am unsure
+            return jnp.mean(action_probs * ((self.config.ALPHA * log_pi) - min_qf_values))
 
-        actor_loss, grads = jax.value_and_grad(actor_loss)(actor_state.params,
+        actor_loss, grads = jax.value_and_grad(actor_loss, argnums=0)(actor_state.params,
                                                            critic_state.params,
                                                            batch,
                                                            key

@@ -3,6 +3,7 @@ import jax.numpy as jnp
 import jax.random as jrandom
 import flax
 import chex
+import sys
 
 from functools import partial
 from typing import Any, Tuple
@@ -203,7 +204,7 @@ class VAPOR_Lite:
 
             return qf_loss, new_priorities[:, 0]  # to remove the last dimensions of new_priorities
 
-        (critic_loss, new_priorities), grads = jax.value_and_grad(critic_loss, has_aux=True)(
+        (critic_loss, new_priorities), grads = jax.value_and_grad(critic_loss, argnums=1, has_aux=True)(
             actor_state.params,
             critic_state.params,
             critic_state.target_params,
@@ -227,7 +228,7 @@ class VAPOR_Lite:
 
             return jnp.mean(action_probs * ((state_reward_noise * action_probs * log_pi) - min_qf_values))
 
-        actor_loss, grads = jax.value_and_grad(actor_loss)(actor_state.params,
+        actor_loss, grads = jax.value_and_grad(actor_loss, argnums=0)(actor_state.params,
                                                            critic_state.params,
                                                            batch,
                                                            key
@@ -241,7 +242,7 @@ class VAPOR_Lite:
                 loss = jnp.mean(jnp.square(rew_pred - rewards))
                 return loss, rew_pred
 
-            (ensemble_loss, reward_preds), grads = jax.value_and_grad(reward_predictor_loss, has_aux=True)(
+            (ensemble_loss, reward_preds), grads = jax.value_and_grad(reward_predictor_loss, argnums=0, has_aux=True)(
                 indrpr_state.params, indrpr_state.static_prior_params)
             indrpr_state = indrpr_state.apply_gradients(grads=grads)
 

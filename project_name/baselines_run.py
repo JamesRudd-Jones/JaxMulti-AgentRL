@@ -17,13 +17,15 @@ import sys
 
 
 def run_train(config):
-    payoff = jnp.array([[[3, 0], [5, 1]], [[3, 5], [0, 1]]])  # payoff matrix for the IPD
+
     if config.CNN:
+        jnp.array([[[3, 0], [5, 1]], [[3, 5], [0, 1]]])  # TODO sort this out
         env = InTheMatrix(num_inner_steps=config.NUM_INNER_STEPS, num_outer_steps=config.NUM_META_STEPS,
                           fixed_coin_location=False)
         env_params = MatrixEnvParams(payoff_matrix=payoff, freeze_penalty=5)
         utils = UtilsCNN(config)  # TODO this a bit dodge
     else:
+        payoff = [[2, 2], [0, 3], [3, 0], [1, 1]]  # payoff matrix for the IPD
         env = IteratedMatrixGame(num_inner_steps=config.NUM_INNER_STEPS, num_outer_steps=config.NUM_META_STEPS)
         env_params = EnvParams(payoff_matrix=payoff)
         utils = Utils(config)  # TODO this a bit dodge
@@ -56,9 +58,12 @@ def run_train(config):
                 mem_state, action_n, log_prob_n, value_n, key = actor.act(train_state, mem_state, obs_batch, last_done,
                                                                           key)
 
+                # for not cnn
                 # env_act = utils.unbatchify(action_n, range(config.NUM_AGENTS), config.NUM_AGENTS, config["NUM_DEVICES"])
                 # env_act = {k: v for k, v in env_act.items()}
                 # env_act = jax.tree_map(lambda x: jnp.swapaxes(x, 0, 1), env_act)
+
+                # for cnn
                 env_act = jnp.swapaxes(action_n, 0, 1)
 
                 # step in env

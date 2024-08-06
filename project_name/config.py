@@ -24,11 +24,11 @@ def get_config():
     config.BATCH_SIZE = 32
     config.REPLAY_PRIORITY_EXP = 1.0
 
-    # config.CNN = False
-    config.CNN = True
+    config.CNN = False
+    # config.CNN = True
 
     # config.TOTAL_TIMESTEPS = 10000000
-    config.NUM_UPDATES = 40000  # 10000
+    config.NUM_UPDATES = 100  # 40000  # 10000
     config.NUM_INNER_STEPS = 152  # 128
     config.NUM_META_STEPS = 500
     config.NUM_ENVS = 8  # MUST BE SAME SIZE OR BIGGER THAN NUM_MINIBATCHES
@@ -42,7 +42,7 @@ def get_config():
 
     config.WANDB_ENTITY = "jamesr-j"  # change this to your wandb username
 
-    config.AGENT_TYPE = ["MFOS", "PPO_RNN"]  # ["PPO", "PPO"]
+    config.AGENT_TYPE = ["PR2", "PPO_RNN"]  # ["PPO", "PPO"]
     config.NUM_AGENTS = 2  # TODO is this really the best way?
 
     return config

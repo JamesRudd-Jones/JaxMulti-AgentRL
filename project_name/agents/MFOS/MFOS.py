@@ -119,8 +119,10 @@ class MFOSAgent:
         train_state, mem_state, env_state, ac_in, key = runner_state
         return train_state, mem_state, env_state, ac_in, key
 
-    @partial(jax.jit, static_argnums=(0,))
+    @partial(jax.jit, static_argnums=(0,2))
     def meta_update(self, runner_state, agent, traj_batch):
+        # new_mem_state = jax.tree_map(lambda x: x[:, jnp.newaxis, :], traj_batch.mem_state[agent])
+        # traj_batch = traj_batch._replace(mem_state=new_mem_state)
         traj_batch = jax.tree_map(lambda x: x[:, agent], traj_batch)
         # CALCULATE ADVANTAGE
         train_state, mem_state, env_state, ac_in, key = runner_state

@@ -4,7 +4,7 @@ import jax.random as jrandom
 from project_name.vapor_stuff.config import get_config  # TODO dodge need to know how to fix this
 import wandb
 import gymnax
-from project_name.vapor_stuff.algos import VAPOR_Lite
+from project_name.vapor_stuff.algos import VAPOR_Lite, SAC
 from typing import NamedTuple
 import chex
 from project_name.vapor_stuff.utils import TransitionNoInfo
@@ -20,7 +20,7 @@ class Transition(NamedTuple):
 
 
 def run_train(config):
-    env, env_params = gymnax.make("DeepSea-bsuite", size=8)  # TODO edited the gymnax env for deepsea for info
+    env, env_params = gymnax.make("DeepSea-bsuite", size=30)  # TODO edited the gymnax env for deepsea for info
 
     def train():
         key = jax.random.PRNGKey(config.SEED)

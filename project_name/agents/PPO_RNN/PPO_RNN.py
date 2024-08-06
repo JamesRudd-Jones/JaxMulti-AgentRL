@@ -93,8 +93,10 @@ class PPO_RNNAgent:
 
         return mem_state, action, log_prob, value, key
 
-    @partial(jax.jit, static_argnums=(0,))
+    @partial(jax.jit, static_argnums=(0,2))
     def update(self, runner_state, agent, traj_batch):
+        # new_mem_state = jax.tree_map(lambda x: x[:, jnp.newaxis, :], traj_batch.mem_state[agent])
+        # traj_batch = traj_batch._replace(mem_state=new_mem_state)
         traj_batch = jax.tree_map(lambda x: x[:, agent], traj_batch)
         # CALCULATE ADVANTAGE
         train_state, mem_state, env_state, ac_in, key = runner_state
@@ -112,7 +114,7 @@ class PPO_RNNAgent:
                     transition.value,
                     transition.reward,
                 )
-                delta = reward + self.config["GAMMA"] * next_value * (1 - done) - value
+                delta = reward + self.config.GAMMA * next_value * (1 - done) - value
                 gae = (delta + self.config["GAMMA"] * self.config["GAE_LAMBDA"] * (1 - done) * gae)
                 return (gae, value), gae
 
@@ -209,7 +211,7 @@ class PPO_RNNAgent:
 
         return train_state, mem_state, env_state, ac_in, key
 
-    @partial(jax.jit, static_argnums=(0,))
+    @partial(jax.jit, static_argnums=(0,2))
     def meta_update(self, runner_state, agent, traj_batch):
         train_state, mem_state, env_state, ac_in, key = runner_state
         return train_state, mem_state, env_state, ac_in, key
