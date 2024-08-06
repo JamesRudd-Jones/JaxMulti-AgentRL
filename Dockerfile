@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1
-FROM python:3.10-bookworm as base
+FROM python:3.10-bookworm AS base
 
 # RUN rm -f /etc/apt/apt.conf.d/docker-clean; echo 'Binary::apt::APT::Keep-Downloaded-Packages "true";' > /etc/apt/apt.conf.d/keep-cache
 # RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
@@ -20,7 +20,7 @@ RUN pdm export -o /requirements.txt
 #RUN grep -E 'git\+' /requirements.txt > /requirements-vcs.txt  # TODO added this to split hash and non hashes up
 #RUN grep -E 'git\+' -v /requirements.txt > /requirements-hashed.txt
 
-FROM python:3.10-bookworm as prod
+FROM python:3.10-bookworm AS prod
 
 #COPY --from=base /requirements-vcs.txt /requirements-vcs.txt
 #COPY --from=base /requirements-hashed.txt /requirements-hashed.txt

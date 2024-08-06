@@ -23,6 +23,7 @@ def get_config():
     config.BUFFER_SIZE = 100000
     config.BATCH_SIZE = 32
     config.REPLAY_PRIORITY_EXP = 1.0
+    config.KERNEL_UPDATE_RATIO = 0.5
 
     config.CNN = False
     # config.CNN = True
