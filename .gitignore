@@ -161,3 +161,7 @@ cython_debug/
 #  option (not recommended) you can uncomment the following to ignore the entire idea folder.
 #.idea/
 /wandb_api_key.txt
+/prob_inf_marl-cuda.sif
+/wandb/
+/lxm.toml
+/pdm.lock

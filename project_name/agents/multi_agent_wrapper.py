@@ -46,6 +46,22 @@ class MultiAgent(Agent):
         return mem_state, action_n, log_prob_n, value_n, key
 
     @partial(jax.jit, static_argnums=(0,))
+    def update_encoding(self, train_state: Any, mem_state: Any, obs_batch: Any, action: Any, reward: Any, done: Any):
+        # TODO add better chex
+        for agent in range(self.config.NUM_AGENTS):
+            ind_mem_state = self.agent_list[agent].update_encoding(train_state[agent],
+                                                                   mem_state[agent],
+                                                                   agent,
+                                                                   obs_batch,
+                                                                   action,
+                                                                   reward,
+                                                                   done)
+            mem_state[agent] = ind_mem_state
+            # TODO do I need train_state too? it doesn't update so don't think so
+
+        return mem_state
+
+    @partial(jax.jit, static_argnums=(0,))
     def meta_act(self, mem_state: Any):
         for agent in range(self.config.NUM_AGENTS):
             mem_state[agent] = self.agent_list[agent].meta_policy(mem_state[agent])
@@ -68,7 +84,8 @@ class MultiAgent(Agent):
             # individual_trajectory_batch = jax.tree_map(lambda x: x[:, agent], individual_trajectory_batch)
             ac_in = self.utils.ac_in(last_obs_batch, last_done, agent)  # TODO is this dodge?
             individual_train_state = (train_state[agent], mem_state[agent], env_state, ac_in, key)
-            individual_runner_list = self.agent_list[agent].update(individual_train_state, agent, individual_trajectory_batch)
+            individual_runner_list = self.agent_list[agent].update(individual_train_state, agent,
+                                                                   individual_trajectory_batch)
             train_state[agent] = individual_runner_list[0]
             mem_state[agent] = individual_runner_list[1]
             key = individual_runner_list[-1]

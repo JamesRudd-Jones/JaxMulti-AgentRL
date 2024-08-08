@@ -17,9 +17,8 @@ import sys
 
 
 def run_train(config):
-
     if config.CNN:
-        jnp.array([[[3, 0], [5, 1]], [[3, 5], [0, 1]]])  # TODO sort this out
+        payoff = jnp.array([[[3, 0], [5, 1]], [[3, 5], [0, 1]]])  # TODO sort this out
         env = InTheMatrix(num_inner_steps=config.NUM_INNER_STEPS, num_outer_steps=config.NUM_META_STEPS,
                           fixed_coin_location=False)
         env_params = MatrixEnvParams(payoff_matrix=payoff, freeze_penalty=5)
@@ -63,7 +62,7 @@ def run_train(config):
                 # env_act = {k: v for k, v in env_act.items()}
                 # env_act = jax.tree_map(lambda x: jnp.swapaxes(x, 0, 1), env_act)
 
-                # for cnn
+                # for cnn maybe
                 env_act = jnp.swapaxes(action_n, 0, 1)
 
                 # step in env
@@ -80,6 +79,15 @@ def run_train(config):
                 done_batch = jnp.swapaxes(jnp.tile(done[:, jnp.newaxis], (1, config.NUM_AGENTS)), 0, 1)
                 reward_batch = utils.batchify(reward, range(config.NUM_AGENTS), config.NUM_AGENTS,
                                               config["NUM_ENVS"]).squeeze(axis=-1)
+
+                nobs_batch = utils.batchify_obs(obs, range(config.NUM_AGENTS), config.NUM_AGENTS, config["NUM_ENVS"])
+                # latent_sample, latent_mean, latent_log_var, encoder_hstate = the below maybe idk where better to put basos
+                mem_state = actor.update_encoding(train_state,
+                                                  mem_state,
+                                                  nobs_batch,
+                                                  action_n,
+                                                  reward_batch,
+                                                  done_batch)
 
                 transition = Transition(done_batch,
                                         done_batch,
@@ -103,9 +111,10 @@ def run_train(config):
             # needs the below to add the new trajectory_buffer
 
             last_obs_batch = utils.batchify_obs(obs, range(config.NUM_AGENTS), config.NUM_AGENTS, config.NUM_ENVS)
-            train_state, mem_state, env_state, last_obs_batch, done, key = actor.update(train_state, mem_state, env_state,
-                                                                             last_obs_batch, done, key,
-                                                                             trajectory_batch)
+            train_state, mem_state, env_state, last_obs_batch, done, key = actor.update(train_state, mem_state,
+                                                                                        env_state,
+                                                                                        last_obs_batch, done, key,
+                                                                                        trajectory_batch)
 
             def callback(metrics, env_stats):
                 metric_dict = {
@@ -161,9 +170,10 @@ def run_train(config):
             train_state, mem_state, env_state, obs, done, key = runner_state
 
             last_obs_batch = utils.batchify_obs(obs, range(config.NUM_AGENTS), config.NUM_AGENTS, config.NUM_ENVS)
-            train_state, mem_state, env_state, last_obs_batch, done, key = actor.meta_update(train_state, mem_state, env_state,
-                                                                                  last_obs_batch, done, key,
-                                                                                  collapsed_trajectory_batch)
+            train_state, mem_state, env_state, last_obs_batch, done, key = actor.meta_update(train_state, mem_state,
+                                                                                             env_state,
+                                                                                             last_obs_batch, done, key,
+                                                                                             collapsed_trajectory_batch)
             # TODO benchmark if need to output last_obs_batch and env_state and done or not as they don't change?
 
             metric = meta_trajectory_batch.info

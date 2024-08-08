@@ -25,11 +25,17 @@ def get_config():
     config.REPLAY_PRIORITY_EXP = 1.0
     config.KERNEL_UPDATE_RATIO = 0.5
 
+    # MELIBA
+    config.LATENT_DIM = 2
+
     config.CNN = False
     # config.CNN = True
 
+    config.STATELESS = False
+    # config.STATELESS = True
+
     # config.TOTAL_TIMESTEPS = 10000000
-    config.NUM_UPDATES = 100  # 40000  # 10000
+    config.NUM_UPDATES = 40000  # 40000  # 10000
     config.NUM_INNER_STEPS = 152  # 128
     config.NUM_META_STEPS = 500
     config.NUM_ENVS = 8  # MUST BE SAME SIZE OR BIGGER THAN NUM_MINIBATCHES
@@ -43,7 +49,7 @@ def get_config():
 
     config.WANDB_ENTITY = "jamesr-j"  # change this to your wandb username
 
-    config.AGENT_TYPE = ["PR2", "PPO_RNN"]  # ["PPO", "PPO"]
+    config.AGENT_TYPE = ["MELIBA", "PPO_RNN"]  # ["PPO", "PPO"]
     config.NUM_AGENTS = 2  # TODO is this really the best way?
 
     return config

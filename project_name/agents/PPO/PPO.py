@@ -78,12 +78,12 @@ class PPOAgent:
     def update(self, runner_state, agent, traj_batch):
         traj_batch = jax.tree_map(lambda x: x[:, agent], traj_batch)
         # CALCULATE ADVANTAGE
-        train_state, mem_state, env_state, last_obs, last_done, key = runner_state
+        train_state, mem_state, env_state, ac_in, key = runner_state
         # avail_actions = jnp.ones(self.env.action_space(self.env.agents[0]).n)
-        ac_in = (last_obs[jnp.newaxis, :],
-                 last_done[jnp.newaxis, :],
-                 # avail_actions[jnp.newaxis, :],
-                 )
+        # ac_in = (last_obs[jnp.newaxis, :],
+        #          last_done[jnp.newaxis, :],
+        #          # avail_actions[jnp.newaxis, :],
+        #          )
         _, last_val, _ = train_state.apply_fn(train_state.params, ac_in)
         last_val = last_val.squeeze()
 
@@ -185,7 +185,7 @@ class PPOAgent:
         update_state, loss_info = jax.lax.scan(_update_epoch, update_state, None, self.config["UPDATE_EPOCHS"])
         train_state, traj_batch, advantages, targets, key = update_state
 
-        return train_state, mem_state, env_state, last_obs, last_done, key
+        return train_state, mem_state, env_state, ac_in, key
 
     @partial(jax.jit, static_argnums=(0,))
     def meta_update(self, runner_state, agent, traj_batch):
