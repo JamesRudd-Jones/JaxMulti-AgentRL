@@ -220,7 +220,7 @@ class MELIBAAgent:
                                               traj_batch.log_prob,
                                               traj_batch.obs,
                                               traj_batch.info,
-                                              jnp.swapaxes(traj_batch.mem_state.extras["latent_sample"].squeeze(axis=(1, 2)), 1, 2))
+                                              traj_batch.mem_state.extras["latent_sample"].squeeze(axis=1))
         ppo_train_state, mem_state, env_state, ac_in, key = self.ppo.update(ppo_runner_state, agent, ppo_traj_batch)
         train_state = train_state._replace(ppo_state=ppo_runner_state)  # TODO check this works
 
@@ -233,7 +233,7 @@ class MELIBAAgent:
         return train_state, mem_state, env_state, ac_in, key
 
     @partial(jax.jit, static_argnums=(0,))
-    def _update_vae(self, train_state, mem_state, traj_batch):
+    def _update_vae(self, train_state, mem_state, batch):
 
         def calc_kl_loss(mean, log_var, elbo_indices):  # TODO unsure this is correct for now
             gaussian_dim = mean.shape[-1]
@@ -261,8 +261,16 @@ class MELIBAAgent:
 
             return kl_divergences
 
-        def compute_loss(params, hidden_encoder, hidden_decoder, past_traj):  # TODO do I need this hidden state idk?
+        def compute_loss(params, hidden_encoder, hidden_decoder, batch):  # TODO do I need this hidden state idk?
             # TODO this kinda dodgy loss I think, as t may shift but H stays the same? maybe that is okay?
+
+            obs = batch.experience.first.obs
+            action = batch.experience.first.action
+            reward = batch.experience.first.reward
+            done = batch.experience.first.done
+            nobs = batch.experience.second.obs
+            naction = batch.experience.second.action
+            ndone = batch.experience.second.done
 
             # pass through encoder to get the mean and stddev, include the prior so shape is H+1
             # TODO how to get prior from vae and use with the kl loss, they should both have the save dimensions
@@ -302,11 +310,11 @@ class MELIBAAgent:
 
             return loss, (kl_loss, total_action_loss, future_actions)
 
-        grad_fn = jax.value_and_grad(compute_loss, has_aux=True, allow_int=True)
+        grad_fn = jax.value_and_grad(compute_loss, has_aux=True, allow_int=True)  # TODO turn off int
         total_loss, grads = grad_fn(train_state.vae_state.params,
                                     mem_state.encoder_hstate,
                                     mem_state.decoder_hstate,
-                                    traj_batch)
+                                    batch)
         train_state = train_state.apply_gradients(grads=grads)
 
         return train_state, total_loss
