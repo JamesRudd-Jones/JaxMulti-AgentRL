@@ -12,10 +12,10 @@ def main(_):
     # TODO needs to add the v-trace at some point but kinda cba for now
     # TODO should be fairly easy using rlax if vmap the loss?
 
-    wandb.init(  # project="ProbInfMarl",
-        # entity=config.WANDB_ENTITY,
+    wandb.init(project="ProbInfMarl",
+        entity=config.WANDB_ENTITY,
         config=config,
-        # group="BASELINES",
+        group="BASELINES",
         mode=config.WANDB
     )
 

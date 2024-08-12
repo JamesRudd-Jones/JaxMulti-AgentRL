@@ -5,6 +5,7 @@ import numpy as np
 import jax.random as jrandom
 import flax.linen as nn
 from functools import partial
+from typing import Sequence
 import sys
 
 
@@ -95,13 +96,14 @@ class Encoder(nn.Module):
         final_layer = nn.relu(nn.Dense(64)(post_rnn))  # TODO figure out how to get multiple agents here
 
         # output should be n (number of agent) dimensions of mu and sigma
-        mu = nn.Dense(2)(final_layer)
-        log_sigma = nn.Dense(2)(final_layer)
+        mu = nn.Dense(self.config.LATENT_DIM)(final_layer)
+        log_sigma = nn.Dense(self.config.LATENT_DIM)(final_layer)
 
         return hidden, mu, log_sigma
 
 
 class Decoder(nn.Module):
+    action_dim: Sequence[int]
     config: dict
 
     @nn.compact
@@ -130,11 +132,10 @@ class Decoder(nn.Module):
         # 32
         last_embedding = nn.relu(nn.Dense(32)(embedding))
 
-        opponent_action_logits = nn.Dense(2)(last_embedding)
-        # opponent_action = jnp.argmax(nn.softmax(opponent_action, axis=-1), axis=-1)[:, jnp.newaxis]
-        # TODO ensure adds new axis at the right spot above
+        # opponent_action_logits = nn.Dense(2)(last_embedding)
+        opponent_action_logits = nn.Dense(self.action_dim)(last_embedding)
 
-        # shape should be batch_size, num_envs, len_trajectory, action_dim
+        # shape should be batch_size, num_envs, action_dim
         return hidden, opponent_action_logits  # TODO dimensions should be number of forecasting steps idk what the dims be here tho
 
 
@@ -146,23 +147,24 @@ class HierarchicalSequentialVAE(nn.Module):
     4) should we train on incomplete trajectories? or trajectories that span episodes? will this mess up the future action prediction since if it spans episodes it may not predict the right actions???
     5)
     """
-    key: chex.PRNGKey
+    action_dim: Sequence[int]
     config: dict
 
     def setup(self):
         self.encoder = Encoder(self.config)
-        self.decoder = Decoder(self.config)
+        self.decoder = Decoder(self.action_dim, self.config)
 
-    def _gaussian_sample(self, mu, log_sigma):
-        key, _key = jrandom.split(self.key)  # TODO is this okay idk?
+    @staticmethod
+    def gaussian_sample(mu, log_sigma, key):
+        key, _key = jrandom.split(key)  # TODO is this okay idk?
         return mu + jnp.exp(0.5 * log_sigma) * jrandom.normal(_key, mu.shape)
 
     @nn.compact
-    def __call__(self, hidden_encoder, hidden_decoder, past_traj, full_traj=False):
+    def __call__(self, hidden_encoder, hidden_decoder, past_traj, key, full_traj=False):
         # run the encoder on trajectory
         hidden_encoder, mu, log_sigma = self.encoder(hidden_encoder, past_traj, full_traj)
 
-        latent_sample = self._gaussian_sample(mu, log_sigma)
+        latent_sample = self.gaussian_sample(mu, log_sigma, key)
 
         # run decoder on potential future steps, up to H
         # for agent in range(self.num_agents):
@@ -170,4 +172,4 @@ class HierarchicalSequentialVAE(nn.Module):
         # TODO sort out what hidden does here, are we feeding in the right or wrong ones to each rnn
 
         # some output concat
-        return future_actions, mu, log_sigma, hidden_encoder, hidden_decoder
+        return future_actions, latent_sample, mu, log_sigma, hidden_encoder, hidden_decoder

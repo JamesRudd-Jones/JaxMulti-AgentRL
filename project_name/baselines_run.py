@@ -24,7 +24,7 @@ def run_train(config):
         env_params = MatrixEnvParams(payoff_matrix=payoff, freeze_penalty=5)
         utils = UtilsCNN(config)  # TODO this a bit dodge
     else:
-        payoff = [[2, 2], [0, 3], [3, 0], [1, 1]]  # payoff matrix for the IPD
+        payoff = [[1,1], [0,8], [8,0], [-1,-1]]   # [[-1,-1], [-3,0], [0,-3], [-2,-2]]  # [[2, 2], [0, 3], [3, 0], [1, 1]]  # payoff matrix for the IPD
         env = IteratedMatrixGame(num_inner_steps=config.NUM_INNER_STEPS, num_outer_steps=config.NUM_META_STEPS)
         env_params = EnvParams(payoff_matrix=payoff)
         utils = Utils(config)  # TODO this a bit dodge
@@ -87,7 +87,8 @@ def run_train(config):
                                                   nobs_batch,
                                                   action_n,
                                                   reward_batch,
-                                                  done_batch)
+                                                  done_batch,
+                                                  key)
 
                 transition = Transition(done_batch,
                                         done_batch,

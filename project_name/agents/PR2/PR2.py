@@ -285,7 +285,11 @@ class PR2Agent:
 
         return train_state, mem_state, env_state, ac_in, key
 
-    @partial(jax.jit, static_argnums=(0,))
+    @partial(jax.jit, static_argnums=(0,2))
     def meta_update(self, runner_state, agent, traj_batch):
         train_state, mem_state, env_state, ac_in, key = runner_state
         return train_state, mem_state, env_state, ac_in, key
+
+    @partial(jax.jit, static_argnums=(0, 3))
+    def update_encoding(self, train_state, mem_state, agent, obs_batch, action, reward, done):
+        return mem_state

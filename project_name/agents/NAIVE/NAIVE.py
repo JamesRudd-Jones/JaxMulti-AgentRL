@@ -4,13 +4,13 @@ import jax.numpy as jnp
 from typing import Any
 import jax.random as jrandom
 from functools import partial
-from project_name.agents.PPO.network import ActorCritic  # TODO sort out this class import ting
+from project_name.agents.NAIVE.network import ActorCritic  # TODO sort out this class import ting
 import optax
 from flax.training.train_state import TrainState
 from project_name.utils import MemoryState
 
 
-class PPOAgent:
+class NAIVEAgent:
     def __init__(self,
                  env,
                  env_params,
@@ -124,23 +124,14 @@ class PPOAgent:
                     log_prob = pi.log_prob(traj_batch.action)
 
                     # CALCULATE VALUE LOSS
-                    value_pred_clipped = traj_batch.value + (value - traj_batch.value).clip(-self.config["CLIP_EPS"],
-                                                                                            self.config["CLIP_EPS"])
                     value_losses = jnp.square(value - targets)
-                    value_losses_clipped = jnp.square(value_pred_clipped - targets)
-                    value_loss = 0.5 * jnp.maximum(value_losses, value_losses_clipped).mean(
-                        where=(1 - traj_batch.done))
+                    value_loss = 0.5 * value_losses.mean(where=(1 - traj_batch.done))
 
                     # CALCULATE ACTOR LOSS
                     ratio = jnp.exp(log_prob - traj_batch.log_prob)
-                    gae = (gae - gae.mean()) / (gae.std() + 1e-8)
-                    loss_actor1 = ratio * gae
-                    loss_actor2 = (jnp.clip(ratio,
-                                            1.0 - self.config["CLIP_EPS"],
-                                            1.0 + self.config["CLIP_EPS"],
-                                            ) * gae)
-                    loss_actor = -jnp.minimum(loss_actor1, loss_actor2)
+                    loss_actor = ratio * gae
                     loss_actor = loss_actor.mean(where=(1 - traj_batch.done))
+
                     entropy = pi.entropy().mean(where=(1 - traj_batch.done))
 
                     total_loss = (loss_actor

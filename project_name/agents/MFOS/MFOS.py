@@ -1,3 +1,5 @@
+# Adapted from https://github.com/ucl-dark/pax/blob/main/pax/agents/mfos_ppo/ppo_gru.py
+
 import jax
 import jax.numpy as jnp
 import jax.random as jrandom
@@ -238,3 +240,7 @@ class MFOSAgent:
         # TODO unsure if need to update the mem_state at all with the new hstate thingos
 
         return train_state, mem_state, env_state, ac_in, key
+
+    @partial(jax.jit, static_argnums=(0, 3))
+    def update_encoding(self, train_state, mem_state, agent, obs_batch, action, reward, done):
+        return mem_state

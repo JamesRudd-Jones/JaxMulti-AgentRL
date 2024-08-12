@@ -3,7 +3,7 @@ import jax
 import jax.numpy as jnp
 import jax.random as jrandom
 from project_name.agents.MELIBA.hierarchical_sequential_VAE import HierarchicalSequentialVAE, EncoderRNN, \
-    DecoderRNN, Encoder  # TODO sort this out
+    DecoderRNN, Encoder, Decoder  # TODO sort this out
 from flax.training.train_state import TrainState
 import optax
 from project_name.agents.MELIBA.PPO import PPOAgent  # TODO sort this out
@@ -12,6 +12,8 @@ import sys
 import flax.linen as nn
 from typing import Tuple, NamedTuple, Mapping, Any
 import flashbax as fbx
+import distrax
+from project_name.utils import remove_element
 
 
 class MemoryStateMELIBA(NamedTuple):
@@ -72,23 +74,25 @@ class MELIBAAgent:
 
         key, _key = jrandom.split(key)
         self.encoder = Encoder(config)
-        self.hsvae = HierarchicalSequentialVAE(_key, config)
+        self.decoder = Decoder(env.action_space(env_params).n, config)
+        self.hsvae = HierarchicalSequentialVAE(env.action_space(env_params).n, config)
 
         self.init_encoder_hstate = EncoderRNN.initialize_carry(config["NUM_ENVS"],
                                                                config["GRU_HIDDEN_DIM"])  # TODO individual configs pls
         self.init_decoder_hstate = DecoderRNN.initialize_carry(config["NUM_ENVS"], config["GRU_HIDDEN_DIM"])
 
-        self.hsvae_params = self.hsvae.init(_key, self.init_encoder_hstate, self.init_decoder_hstate, init_x)
+        self.hsvae_params = self.hsvae.init(_key, self.init_encoder_hstate, self.init_decoder_hstate, init_x, key)
 
         self.ppo = PPOAgent(env, env_params, key, config)
 
-        self.vae_buffer = fbx.make_prioritised_flat_buffer(max_length=config.BUFFER_SIZE,
-                                                           min_length=config.BATCH_SIZE,
-                                                           sample_batch_size=config.BATCH_SIZE,
-                                                           add_sequences=True,
-                                                           add_batch_size=None,
-                                                           priority_exponent=config.REPLAY_PRIORITY_EXP,
-                                                           device=config.DEVICE)
+        self.vae_buffer = fbx.make_trajectory_buffer(max_length_time_axis=config.NUM_INNER_STEPS * 100,  # TODO is this okay?
+                                                           min_length_time_axis=0,  # TODO again is this okay?
+                                                           sample_batch_size=config.NUM_ENVS,
+                                                           add_batch_size=config.NUM_ENVS,  # TODO is this right?
+                                                           sample_sequence_length=config.NUM_INNER_STEPS+1,
+                                                           period=1,  # TODO again is this okay?
+                                                           # device=config.DEVICE
+                                                     )
 
         self.vae_buffer = self.vae_buffer.replace(init=jax.jit(self.vae_buffer.init),
                                                   add=jax.jit(self.vae_buffer.add, donate_argnums=0),
@@ -106,12 +110,11 @@ class MELIBAAgent:
                                   encoder_hstate=self.init_encoder_hstate,
                                   decoder_hstate=self.init_decoder_hstate,
                                   vae_buffer_state=self.vae_buffer.init(
-                                      TransitionMELIBA(done=jnp.zeros((self.config.NUM_ENVS), dtype=bool),
-                                                       action=jnp.zeros((self.config.NUM_AGENTS, self.config.NUM_ENVS),
+                                      TransitionMELIBA(done=jnp.zeros((), dtype=bool),
+                                                       action=jnp.zeros((self.config.NUM_AGENTS),
                                                                         dtype=jnp.int32),
-                                                       reward=jnp.zeros((self.config.NUM_ENVS)),
-                                                       obs=jnp.zeros((self.config.NUM_ENVS,
-                                                                      self.env.observation_space(self.env_params).n),
+                                                       reward=jnp.zeros(()),
+                                                       obs=jnp.zeros((self.env.observation_space(self.env_params).n),
                                                                      dtype=jnp.int8),
                                                        # TODO is it always an int for the obs?
                                                        )),
@@ -140,7 +143,7 @@ class MELIBAAgent:
             "latent_logvar": jnp.zeros((1, self.config.NUM_ENVS, self.config.LATENT_DIM)),
             # TODO should these reset to 0 or not idk?
         },
-            ppo_hstate=jnp.zeros((self.config.NUM_ENVS, 1)),
+            ppo_hstate=self.ppo.create_train_state()[1],
             encoder_hstate=jnp.zeros((self.config.NUM_ENVS, self.config.GRU_HIDDEN_DIM)),
             decoder_hstate=jnp.zeros((self.config.NUM_ENVS, self.config.GRU_HIDDEN_DIM)),
         )
@@ -195,15 +198,45 @@ class MELIBAAgent:
 
         return mem_state, action, log_prob, value, key
 
-    @partial(jax.jit, static_argnums=(0,))
+    @partial(jax.jit, static_argnums=(0,2))
     def update(self, runner_state: chex.Array, agent, traj_batch: chex.Array):
         train_state, mem_state, env_state, ac_in, key = runner_state
 
+        # # print(traj_batch)
+        # dones = traj_batch.done
+        # actions = traj_batch.action
+        # print(dones)
+        # print(actions)
+        # sys.exit()
+        #
+        # def body_fn(carry, x):
+        #     trajectory, collecting, length = carry
+        #     done = x[done_idx]
+        #
+        #     # If we are collecting and haven't hit 'done'
+        #     collecting = collecting | (length == 0)  # Start collecting if length is 0
+        #     length += jnp.where(collecting, 1, 0)  # Increase length if collecting
+        #
+        #     # Add to trajectory buffer if collecting
+        #     trajectory = jnp.where(collecting, trajectory.at[length - 1].set(x), trajectory)
+        #
+        #     # If done flag is encountered, reset for the next trajectory
+        #     collecting = jnp.where(done, False, collecting)
+        #     length = jnp.where(done, 0, length)
+        #
+        #     return (trajectory, collecting, length), (trajectory, done)
+        #
+        # (final_trajectory, _, _), (trajectories, done_flags) = lax.scan(body_fn, initial_state, data)
+        #
+        # sys.exit()
+
+
+
         new_buffer_state = self.vae_buffer.add(mem_state.vae_buffer_state,
-                                               TransitionMELIBA(done=traj_batch.done[:, agent, :],
-                                                                action=traj_batch.action,
-                                                                reward=traj_batch.reward[:, agent, :],
-                                                                obs=traj_batch.obs[:, agent, :],
+                                               TransitionMELIBA(done=jnp.swapaxes(traj_batch.done[:, agent, :], 0, 1),
+                                                                action=jnp.swapaxes(jnp.swapaxes(traj_batch.action, 1, 2), 0, 1),
+                                                                reward=jnp.swapaxes(traj_batch.reward[:, agent, :], 0, 1),
+                                                                obs=jnp.swapaxes(traj_batch.obs[:, agent, :], 0, 1),
                                                                 ))
         mem_state = mem_state._replace(vae_buffer_state=new_buffer_state)
         key, _key = jrandom.split(key)
@@ -212,6 +245,8 @@ class MELIBAAgent:
         # update ppo loss
         ppo_runner_state = train_state.ppo_state, mem_state, env_state, ac_in, key
         # TODO check it works with latent tracking below as unsure if gets at the right step basically
+
+        # TODO add the latent thing as for act as this can be either sample or combo of mean and stdddev etc
         ppo_traj_batch = TransitionNoMemState(traj_batch.global_done,
                                               traj_batch.done,
                                               traj_batch.action,
@@ -222,20 +257,20 @@ class MELIBAAgent:
                                               traj_batch.info,
                                               traj_batch.mem_state.extras["latent_sample"].squeeze(axis=1))
         ppo_train_state, mem_state, env_state, ac_in, key = self.ppo.update(ppo_runner_state, agent, ppo_traj_batch)
-        train_state = train_state._replace(ppo_state=ppo_runner_state)  # TODO check this works
+        train_state = train_state._replace(ppo_state=ppo_train_state)  # TODO check this works
 
         # then also update vae but don't pass through each other
-        vae_train_state, total_loss = self._update_vae(train_state, mem_state, batch)
+        vae_train_state, total_loss = self._update_vae(train_state.vae_state, mem_state, agent, batch, key)
         train_state = train_state._replace(vae_state=vae_train_state)  # TODO check this works
 
         # TODO update encoding my dude encode_running_trajectory
 
         return train_state, mem_state, env_state, ac_in, key
 
-    @partial(jax.jit, static_argnums=(0,))
-    def _update_vae(self, train_state, mem_state, batch):
+    @partial(jax.jit, static_argnums=(0,3))
+    def _update_vae(self, train_state, mem_state, agent, batch, key):
 
-        def calc_kl_loss(mean, log_var, elbo_indices):  # TODO unsure this is correct for now
+        def calc_kl_loss(mean, log_var):  # TODO unsure this is correct for now
             gaussian_dim = mean.shape[-1]
             means_inc_prior = jnp.concatenate((jnp.zeros((mean[0][jnp.newaxis, :].shape)), mean), axis=0)
             log_vars_inc_prior = jnp.concatenate((jnp.ones((log_var[0][jnp.newaxis, :].shape)), log_var), axis=0)
@@ -253,68 +288,77 @@ class MELIBAAgent:
                     jnp.sum(((prior_means - posterior_means) / jnp.exp(prior_log_vars) *
                              (prior_means - posterior_means)), axis=-1))
 
-            if elbo_indices is not None:
-                batchsize = kl_divergences.shape[-1]
-                task_indices = jnp.arange(batchsize)  # .repeat(self.args.vae_subsample_elbos)
-                kl_divergences = kl_divergences[
-                    elbo_indices, task_indices]  # .reshape((self.args.vae_subsample_elbos, batchsize))
-
             return kl_divergences
 
-        def compute_loss(params, hidden_encoder, hidden_decoder, batch):  # TODO do I need this hidden state idk?
+        def compute_loss(params, hidden_encoder, hidden_decoder, batch, key):  # TODO do I need this hidden state idk?
             # TODO this kinda dodgy loss I think, as t may shift but H stays the same? maybe that is okay?
 
-            obs = batch.experience.first.obs
-            action = batch.experience.first.action
-            reward = batch.experience.first.reward
-            done = batch.experience.first.done
-            nobs = batch.experience.second.obs
-            naction = batch.experience.second.action
-            ndone = batch.experience.second.done
+            obs = jnp.swapaxes(batch.experience.obs, 0 ,1)[:-1]
+            action = jnp.swapaxes(batch.experience.action, 0 ,1)[:-1]
+            naction = jnp.swapaxes(batch.experience.action, 0 ,1)[1:]
+            reward = jnp.expand_dims(jnp.swapaxes(batch.experience.reward, 0 ,1), axis=-1)[:-1]
+            done = jnp.swapaxes(batch.experience.done, 0 ,1)[:-1]
 
-            # pass through encoder to get the mean and stddev, include the prior so shape is H+1
-            # TODO how to get prior from vae and use with the kl loss, they should both have the save dimensions
-            future_action_logits, batch_mu, batch_log_sigma, hidden_encoder, hidden_decoder = train_state.vae_state.apply_fn(
+            naction_opp = remove_element(naction, agent)
+
+            # pass through encoder to get the mean and stddev
+            future_action_logits, batch_samples, batch_mu, batch_logvar, _, _ = train_state.apply_fn(
                 params,
                 hidden_encoder,
                 hidden_decoder,
-                past_traj,
+                (obs, action, reward, done),
+                key,
                 full_traj=True)
+            # TODO can we replace this with just encoder, how do the gradients flow then though?
+
 
             # train by elbo loss which will be dependent on t, aka an elbo for each t, includes prior in kl calc
             total_action_loss = []
+            # batch_mu shape is num_steps, num_envs, latent_dim
             n_elbos = batch_mu.shape[0]
-            for elbo in range(n_elbos):  # TODO make this jax later on
+            for elbo in range(1, n_elbos):  # TODO jaxify this, maybe a scan?
                 # do a loss between predicted actions and future actions
-                # this cuts window to elbo:H
-                pred_actions_logits_window = future_action_logits[elbo:]
-                true_actions_window = jnp.squeeze(past_traj[1][elbo:], axis=-1)
-                # TODO maybe an index up or something? am unsure here also remove the need for the 1 index, also num_classes is action space
+                curr_samples = batch_samples[elbo]
+                curr_samples = jnp.repeat(jnp.expand_dims(curr_samples, axis=0), elbo, axis=0)
 
-                # cross entropy loss as using discrete actions atm
-                action_loss = jnp.prod(
-                    optax.softmax_cross_entropy_with_integer_labels(pred_actions_logits_window, true_actions_window))
+                hidden = hidden_decoder  # [:, :elbo]  # TODO unsure about this imo
+                dones = done[:elbo]
+                latent_space = curr_samples
+                state = obs[:elbo]
+
+                hidden_decoder, naction_logits = self.decoder.apply({"params": params["params"]["decoder"]},
+                                                            hidden, dones, latent_space, state)
+                # TODO is it better to do a total loss or just loss between actions idk?
+
+                true_nactions_window = jnp.squeeze(naction_opp[:elbo], axis=-1)
+
+                # cross entropy loss as using discrete actions atm, prod over elbo terms, average over batches
+                action_loss = jnp.mean(jnp.prod(
+                    optax.softmax_cross_entropy_with_integer_labels(naction_logits, true_nactions_window), axis=0))
                 # TODO is the above prod the right thing to do?
 
                 total_action_loss.append(action_loss)
 
-            # do the kl loss between distributions
-            kl_loss = jnp.sum(calc_kl_loss(batch_mu, batch_log_sigma, None))  # TODO could be a mean or sum
+            # do the kl loss between distributions, "prod" over t for elbos, mean over batches
+            kl_loss = jnp.mean(jnp.prod(calc_kl_loss(batch_mu, batch_logvar), axis=0))
+            # TODO could be a prod or mean or sum?
 
-            total_action_loss = sum(total_action_loss)
+            total_action_loss = jnp.sum(jnp.stack(total_action_loss))
 
-            # take the mean
-            loss = jnp.mean(self.config["KL_WEIGHT"] * kl_loss + total_action_loss)  # TODO unsure if need this mean?
+            loss = self.config["KL_WEIGHT"] * kl_loss + total_action_loss
 
-            future_actions = jnp.argmax(jax.nn.softmax(future_action_logits), axis=-1)
+            pi = distrax.Categorical(logits=future_action_logits)
+            key, _key = jrandom.split(key)
+            future_actions = pi.sample(seed=_key)
 
             return loss, (kl_loss, total_action_loss, future_actions)
 
-        grad_fn = jax.value_and_grad(compute_loss, has_aux=True, allow_int=True)  # TODO turn off int
-        total_loss, grads = grad_fn(train_state.vae_state.params,
+        grad_fn = jax.value_and_grad(compute_loss, has_aux=True, argnums=0)
+        total_loss, grads = grad_fn(train_state.params,
                                     mem_state.encoder_hstate,
                                     mem_state.decoder_hstate,
-                                    batch)
+                                    batch,
+                                    key)
         train_state = train_state.apply_gradients(grads=grads)
 
         return train_state, total_loss
@@ -325,7 +369,7 @@ class MELIBAAgent:
         return train_state, mem_state, env_state, ac_in, key
 
     @partial(jax.jit, static_argnums=(0, 3))
-    def update_encoding(self, train_state, mem_state, agent, obs_batch, action, reward, done):
+    def update_encoding(self, train_state, mem_state, agent, obs_batch, action, reward, done, key):
         # TODO make sure this is fine lol as may mess up if get full traj length inputs
         obs_batch = jnp.expand_dims(obs_batch[agent], axis=0)
         action = jnp.expand_dims(jnp.swapaxes(action, 0, 1), axis=0)
@@ -337,7 +381,7 @@ class MELIBAAgent:
             mem_state.encoder_hstate,
             (obs_batch, action, reward, done))
 
-        latent_sample = self.hsvae._gaussian_sample(latent_mean, latent_logvar)
+        latent_sample = self.hsvae.gaussian_sample(latent_mean, latent_logvar, key)
 
         mem_state = mem_state._replace(extras={
             "values": mem_state.extras["values"],

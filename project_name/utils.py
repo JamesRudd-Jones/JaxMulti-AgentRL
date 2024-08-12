@@ -169,6 +169,15 @@ def ipditm_stats(state: Any, traj_batch: Transition, num_envs: int) -> dict:
     }
 
 
+def remove_element(arr, index):  # TODO can improve?
+    if arr.shape[-1] == 1:
+        raise ValueError("Cannot remove element from an array of size 1")
+    elif arr.shape[-1] == 2:
+        return jnp.expand_dims(arr[:, :, 1 - index], -1)
+    else:
+        return jnp.concatenate([arr[:, :, :index], arr[:, :, index + 1:]])
+
+
 class Utils:
     def __init__(self, config):
         self.config = config

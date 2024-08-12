@@ -46,7 +46,7 @@ class MultiAgent(Agent):
         return mem_state, action_n, log_prob_n, value_n, key
 
     @partial(jax.jit, static_argnums=(0,))
-    def update_encoding(self, train_state: Any, mem_state: Any, obs_batch: Any, action: Any, reward: Any, done: Any):
+    def update_encoding(self, train_state: Any, mem_state: Any, obs_batch: Any, action: Any, reward: Any, done: Any, key):
         # TODO add better chex
         for agent in range(self.config.NUM_AGENTS):
             ind_mem_state = self.agent_list[agent].update_encoding(train_state[agent],
@@ -55,7 +55,8 @@ class MultiAgent(Agent):
                                                                    obs_batch,
                                                                    action,
                                                                    reward,
-                                                                   done)
+                                                                   done,
+                                                                   key)
             mem_state[agent] = ind_mem_state
             # TODO do I need train_state too? it doesn't update so don't think so
 
