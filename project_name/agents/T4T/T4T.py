@@ -8,9 +8,10 @@ from project_name.agents.PPO.network import ActorCritic  # TODO sort out this cl
 import optax
 from flax.training.train_state import TrainState
 from project_name.utils import MemoryState
+from project_name.agents import AgentBase
 
 
-class T4TAgent:
+class T4TAgent(AgentBase):
     def __init__(self,
                  env,
                  env_params,
@@ -39,10 +40,6 @@ class T4TAgent:
         )
         return mem_state
 
-    @partial(jax.jit, static_argnums=(0,))
-    def meta_policy(self, mem_state):
-        return mem_state
-
     @partial(jax.jit, static_argnums=(0))
     def act(self, train_state: Any, mem_state: Any, ac_in: Any, key: Any):  # TODO better implement checks
         state = ac_in[0]
@@ -54,17 +51,4 @@ class T4TAgent:
         value = jnp.zeros((self.config.NUM_ENVS, 1))
 
         return mem_state, action, log_prob, value, key
-
-    @partial(jax.jit, static_argnums=(0))
-    def update(self, runner_state, agent, traj_batch):
-        return runner_state
-
-    @partial(jax.jit, static_argnums=(0,2))
-    def meta_update(self, runner_state, agent, traj_batch):
-        train_state, mem_state, env_state, ac_in, key = runner_state
-        return train_state, mem_state, env_state, ac_in, key
-
-    @partial(jax.jit, static_argnums=(0, 3))
-    def update_encoding(self, train_state, mem_state, agent, obs_batch, action, reward, done, key):
-        return mem_state
 

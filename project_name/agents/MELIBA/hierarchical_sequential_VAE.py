@@ -76,10 +76,7 @@ class Encoder(nn.Module):
         # shape batch_size, num_envs, len_trajectory, embedding  # TODO for now need to double check dimensions though
         state, action, reward, dones = past_traj
         state = nn.relu(nn.Dense(32)(state))
-        if self.config["STATELESS"]:
-            action = nn.relu(nn.Dense(16)(action[:, 0, :][:, jnp.newaxis, :]))  # TODO check this
-        else:
-            action = nn.relu(nn.Dense(16)(action))
+        action = nn.relu(nn.Dense(16)(action))
         reward = nn.relu(nn.Dense(16)(reward))
 
         rnn_input = jnp.concatenate([state, action, reward], axis=-1)
@@ -109,11 +106,8 @@ class Decoder(nn.Module):
     @nn.compact
     def __call__(self, hidden, dones, latent_space, state):
         # TODO hidden state generation from the first step of the decoder rnn, otherwise use previous hidden state
-        if self.config["STATELESS"]:
-            initial_layer = latent_space
-        else:
-            state = nn.relu(nn.Dense(32)(state))
-            initial_layer = jnp.concatenate([state, latent_space], axis=-1)
+        state = nn.relu(nn.Dense(32)(state))
+        initial_layer = jnp.concatenate([state, latent_space], axis=-1)
 
         # then layer 32xlatent_dim
         m_dim = nn.relu(nn.Dense(32)(initial_layer))

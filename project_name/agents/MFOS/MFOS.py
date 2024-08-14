@@ -9,6 +9,7 @@ from project_name.agents.MFOS.network import ActorCriticMFOSRNN, ScannedMFOSRNN
 from flax.training.train_state import TrainState
 from functools import partial
 import sys
+from project_name.agents import AgentBase
 
 
 class MemoryStateMFOS(NamedTuple):
@@ -20,7 +21,7 @@ class MemoryStateMFOS(NamedTuple):
     extras: Mapping[str, jnp.ndarray]
 
 
-class MFOSAgent:
+class MFOSAgent(AgentBase):
     """A simple PPO agent with memory using JAX"""
 
     def __init__(self,
@@ -117,11 +118,6 @@ class MFOSAgent:
         return mem_state, action, log_prob, value, key
 
     @partial(jax.jit, static_argnums=(0,))
-    def update(self, runner_state, agent, traj_batch):
-        train_state, mem_state, env_state, ac_in, key = runner_state
-        return train_state, mem_state, env_state, ac_in, key
-
-    @partial(jax.jit, static_argnums=(0,2))
     def meta_update(self, runner_state, agent, traj_batch):
         # new_mem_state = jax.tree_map(lambda x: x[:, jnp.newaxis, :], traj_batch.mem_state[agent])
         # traj_batch = traj_batch._replace(mem_state=new_mem_state)
@@ -240,7 +236,3 @@ class MFOSAgent:
         # TODO unsure if need to update the mem_state at all with the new hstate thingos
 
         return train_state, mem_state, env_state, ac_in, key
-
-    @partial(jax.jit, static_argnums=(0, 3))
-    def update_encoding(self, train_state, mem_state, agent, obs_batch, action, reward, done):
-        return mem_state

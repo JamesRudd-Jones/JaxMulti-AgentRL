@@ -8,9 +8,10 @@ from project_name.agents.PPO_RNN.network import ActorCriticRNN, ScannedRNN  # TO
 import optax
 from flax.training.train_state import TrainState
 from project_name.utils import MemoryState
+from project_name.agents import AgentBase
 
 
-class PPO_RNNAgent:
+class PPO_RNNAgent(AgentBase):
     def __init__(self,
                  env,
                  env_params,
@@ -76,10 +77,6 @@ class PPO_RNNAgent:
         return mem_state
 
     @partial(jax.jit, static_argnums=(0,))
-    def meta_policy(self, mem_state):
-        return mem_state
-
-    @partial(jax.jit, static_argnums=(0,))
     def act(self, train_state: Any, mem_state: Any, ac_in: Any, key: Any):  # TODO better implement checks
         hstate, pi, value, action_logits = train_state.apply_fn(train_state.params, mem_state.hstate, ac_in)
         key, _key = jrandom.split(key)
@@ -93,7 +90,7 @@ class PPO_RNNAgent:
 
         return mem_state, action, log_prob, value, key
 
-    @partial(jax.jit, static_argnums=(0,2))
+    @partial(jax.jit, static_argnums=(0,))
     def update(self, runner_state, agent, traj_batch):
         traj_batch = jax.tree_map(lambda x: x[:, agent], traj_batch)
         # CALCULATE ADVANTAGE
@@ -208,12 +205,3 @@ class PPO_RNNAgent:
         train_state, mem_state, traj_batch, advantages, targets, key = update_state
 
         return train_state, mem_state, env_state, ac_in, key
-
-    @partial(jax.jit, static_argnums=(0,2))
-    def meta_update(self, runner_state, agent, traj_batch):
-        train_state, mem_state, env_state, ac_in, key = runner_state
-        return train_state, mem_state, env_state, ac_in, key
-
-    @partial(jax.jit, static_argnums=(0, 3))
-    def update_encoding(self, train_state, mem_state, agent, obs_batch, action, reward, done):
-        return mem_state

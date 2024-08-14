@@ -14,6 +14,7 @@ from typing import Tuple, NamedTuple, Mapping, Any
 import flashbax as fbx
 import distrax
 from project_name.utils import remove_element
+from project_name.agents import AgentBase
 
 
 class MemoryStateMELIBA(NamedTuple):
@@ -49,7 +50,7 @@ class TransitionNoMemState(NamedTuple):
     latent: jnp.ndarray
 
 
-class MELIBAAgent:
+class MELIBAAgent(AgentBase):
     def __init__(self, env,
                  env_params,
                  key: chex.PRNGKey,
@@ -58,19 +59,12 @@ class MELIBAAgent:
         self.env = env
         self.env_params = env_params
 
-        if self.config.STATELESS:
-            init_x = (jnp.zeros((1, config["NUM_ENVS"], 1)),
-                      jnp.zeros((1, config["NUM_ENVS"], 1)),
-                      # env.action_space(env_params).n)),     # actions
-                      jnp.zeros((1, config["NUM_ENVS"], 1)),  # rewards
-                      jnp.zeros((1, config["NUM_ENVS"])))  # dones
-        else:
-            init_x = (
-                jnp.zeros((1, config["NUM_ENVS"], env.observation_space(env_params).n)),  # states
-                jnp.zeros((1, config["NUM_ENVS"], config.NUM_AGENTS)),
-                # env.action_space(env_params).n)),     # actions
-                jnp.zeros((1, config["NUM_ENVS"], 1)),  # rewards
-                jnp.zeros((1, config["NUM_ENVS"])))  # dones
+        init_x = (
+            jnp.zeros((1, config["NUM_ENVS"], env.observation_space(env_params).n)),  # states
+            jnp.zeros((1, config["NUM_ENVS"], config.NUM_AGENTS)),
+            # env.action_space(env_params).n)),     # actions
+            jnp.zeros((1, config["NUM_ENVS"], 1)),  # rewards
+            jnp.zeros((1, config["NUM_ENVS"])))  # dones
 
         key, _key = jrandom.split(key)
         self.encoder = Encoder(config)
@@ -147,10 +141,6 @@ class MELIBAAgent:
             encoder_hstate=jnp.zeros((self.config.NUM_ENVS, self.config.GRU_HIDDEN_DIM)),
             decoder_hstate=jnp.zeros((self.config.NUM_ENVS, self.config.GRU_HIDDEN_DIM)),
         )
-        return mem_state
-
-    @partial(jax.jit, static_argnums=(0,))
-    def meta_policy(self, mem_state):
         return mem_state
 
     @partial(jax.jit, static_argnums=(0,))
@@ -316,34 +306,53 @@ class MELIBAAgent:
             total_action_loss = []
             # batch_mu shape is num_steps, num_envs, latent_dim
             n_elbos = batch_mu.shape[0]
-            for elbo in range(1, n_elbos):  # TODO jaxify this, maybe a scan?
-                # do a loss between predicted actions and future actions
-                curr_samples = batch_samples[elbo]
-                curr_samples = jnp.repeat(jnp.expand_dims(curr_samples, axis=0), elbo, axis=0)
 
-                hidden = hidden_decoder  # [:, :elbo]  # TODO unsure about this imo
-                dones = done[:elbo]
-                latent_space = curr_samples
-                state = obs[:elbo]
+            for elbo in range(0, n_elbos):  # TODO jaxify this, maybe a scan?
+                # # do a loss between predicted actions and future actions
+                true_nactions_window = jnp.squeeze(naction_opp[elbo:], axis=-1)
 
-                hidden_decoder, naction_logits = self.decoder.apply({"params": params["params"]["decoder"]},
-                                                            hidden, dones, latent_space, state)
-                # TODO is it better to do a total loss or just loss between actions idk?
-
-                true_nactions_window = jnp.squeeze(naction_opp[:elbo], axis=-1)
+                # print(future_action_logits[elbo:])
+                # print(true_nactions_window)
+                # print(optax.softmax_cross_entropy_with_integer_labels(future_action_logits[elbo:], true_nactions_window))
+                # print("NEW ONE")
 
                 # cross entropy loss as using discrete actions atm, prod over elbo terms, average over batches
-                action_loss = jnp.mean(jnp.prod(
-                    optax.softmax_cross_entropy_with_integer_labels(naction_logits, true_nactions_window), axis=0))
+                action_loss = jnp.mean(jnp.sum(
+                    optax.softmax_cross_entropy_with_integer_labels(future_action_logits[elbo:], true_nactions_window), axis=0))
                 # TODO is the above prod the right thing to do?
 
+                print(action_loss)
+
                 total_action_loss.append(action_loss)
+
+            # # second loss which should be more efficient
+            # def generate_masked_matrix(tensor):
+            #     shape = tensor.shape
+            #     n = shape[0]
+            #
+            #     def mask_step(k, tensor):
+            #         mask = jnp.arange(n) >= k
+            #         mask = mask.reshape(-1, *([1] * (len(shape) - 1)))
+            #         mask = jnp.broadcast_to(mask, shape)
+            #         return jnp.where(mask, tensor, 0)  # if use sum = 0, if use prod = 1
+            #
+            #     masked_tensors = jax.vmap(mask_step, in_axes=(0, None))(jnp.arange(n), tensor)
+            #     return masked_tensors
+            #
+            # # cross entropy loss as using discrete actions atm
+            # action_loss = optax.softmax_cross_entropy_with_integer_labels(future_action_logits,
+            #                                                               jnp.squeeze(naction_opp, axis=-1))
+            # # prod over individual elbo terms, average over batches, sum over all elbos
+            # total_action_loss_two = jnp.sum(jnp.mean(jnp.sum(generate_masked_matrix(action_loss), axis=1), axis=-1))
 
             # do the kl loss between distributions, "prod" over t for elbos, mean over batches
             kl_loss = jnp.mean(jnp.prod(calc_kl_loss(batch_mu, batch_logvar), axis=0))
             # TODO could be a prod or mean or sum?
 
             total_action_loss = jnp.sum(jnp.stack(total_action_loss))
+            total_action_loss_two = total_action_loss
+            print(total_action_loss)
+            print("NEW ONE")
 
             loss = self.config["KL_WEIGHT"] * kl_loss + total_action_loss
 
@@ -351,7 +360,7 @@ class MELIBAAgent:
             key, _key = jrandom.split(key)
             future_actions = pi.sample(seed=_key)
 
-            return loss, (kl_loss, total_action_loss, future_actions)
+            return loss, (kl_loss, total_action_loss, future_actions, total_action_loss_two)
 
         grad_fn = jax.value_and_grad(compute_loss, has_aux=True, argnums=0)
         total_loss, grads = grad_fn(train_state.params,
@@ -361,36 +370,13 @@ class MELIBAAgent:
                                     key)
         train_state = train_state.apply_gradients(grads=grads)
 
-        return train_state, total_loss
+        loss, (kl_loss, total_action_loss, future_actions, total_action_loss_two) = total_loss
 
-    @partial(jax.jit, static_argnums=(0, 2))
-    def meta_update(self, runner_state, agent, traj_batch):
-        train_state, mem_state, env_state, ac_in, key = runner_state
-        return train_state, mem_state, env_state, ac_in, key
+        def callback(total_action_loss, total_action_loss_two):
+            print(total_action_loss)
+            print(total_action_loss_two)
+            print("NEW ONE")
 
-    @partial(jax.jit, static_argnums=(0, 3))
-    def update_encoding(self, train_state, mem_state, agent, obs_batch, action, reward, done, key):
-        # TODO make sure this is fine lol as may mess up if get full traj length inputs
-        obs_batch = jnp.expand_dims(obs_batch[agent], axis=0)
-        action = jnp.expand_dims(jnp.swapaxes(action, 0, 1), axis=0)
-        reward = jnp.expand_dims(reward[agent], axis=(0, 2))
-        done = jnp.expand_dims(done[agent], axis=(0))
+        # jax.experimental.io_callback(callback, None, total_action_loss, total_action_loss_two)
 
-        encoder_hstate, latent_mean, latent_logvar = self.encoder.apply(
-            {"params": train_state.vae_state.params["params"]["encoder"]},
-            mem_state.encoder_hstate,
-            (obs_batch, action, reward, done))
-
-        latent_sample = self.hsvae.gaussian_sample(latent_mean, latent_logvar, key)
-
-        mem_state = mem_state._replace(extras={
-            "values": mem_state.extras["values"],
-            "log_probs": mem_state.extras["log_probs"],
-            "latent_sample": latent_sample,
-            "latent_mean": latent_mean,
-            "latent_logvar": latent_logvar,  # TODO should these reset to 0 or not idk?
-        },
-            encoder_hstate=encoder_hstate
-        )
-
-        return mem_state
+        return train_state, loss
