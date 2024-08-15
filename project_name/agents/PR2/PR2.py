@@ -288,10 +288,10 @@ class PR2Agent(AgentBase):
 
             action = jnp.swapaxes(action, 1, 2)
             action_ego = jnp.expand_dims(action[:, :, agent], -1)
-            new_obs = jnp.tile(jnp.expand_dims(obs, axis=-2), (1, 1, self.config.KERNEL_N_PARTICLES, 1))
-            new_action_ego = jnp.tile(jnp.expand_dims(action_ego, axis=-2), (1, 1, self.config.KERNEL_N_PARTICLES, 1))
-            latents = jrandom.normal(key, new_action_ego.shape)
-            action_opp = train_state.opp_state.apply_fn(opp_params, new_obs, new_action_ego, latents)
+            kernel_obs = jnp.tile(jnp.expand_dims(obs, axis=-2), (1, 1, self.config.KERNEL_N_PARTICLES, 1))
+            kernel_action_ego = jnp.tile(jnp.expand_dims(action_ego, axis=-2), (1, 1, self.config.KERNEL_N_PARTICLES, 1))
+            latents = jrandom.normal(key, kernel_action_ego.shape)
+            action_opp = train_state.opp_state.apply_fn(opp_params, kernel_obs, kernel_action_ego, latents)
 
             n_updated_actions = int(self.config.KERNEL_N_PARTICLES * self.config.KERNEL_UPDATE_RATIO)
             n_fixed_actions = self.config.KERNEL_N_PARTICLES - n_updated_actions
@@ -334,21 +334,63 @@ class PR2Agent(AgentBase):
 
             kappa = jnp.expand_dims(kernel_dict["output"], axis=-1)
 
+            # calling expectation over fixed actions so the dims become batch_size, num_envs, updated_actions, opp_action_dim
             action_gradients = jnp.mean(kappa * grad_log_p + kernel_dict["gradient"], axis=2)
 
-            def _policy_grads(backprop_policy_grad_params, updated_actions, action_gradients):
-                action_opp = train_state.opp_state.apply_fn(backprop_policy_grad_params, new_obs, updated_actions, latents)
+            # this is now a set of gradients which we can base the parameter updates in
+            # now take gradients over updated_actions dependent on the opp_polict_params
+            # use the action_gradients as starting points? then apply these full gradients to the params to get the loss
 
-                return jnp.mean(action_opp * action_gradients)  # TODO fuck knows if this works
+            def _policy_grads(backprop_policy_grad_params):  # , updated_actions, action_gradients):
+                action_opp = train_state.opp_state.apply_fn(backprop_policy_grad_params, kernel_obs, updated_actions,
+                                                            latents)
 
-            # new_obs = jnp.tile(jnp.expand_dims(obs, axis=-2), (1, 1, n_updated_actions, 1))
-            # new_action_ego = jnp.tile(jnp.expand_dims(action_ego, axis=-2), (1, 1, n_updated_actions, 1))
-            # latents = jrandom.normal(key, new_action_ego.shape)
+                return action_opp * action_gradients
+
+            kernel_obs = jnp.split(kernel_obs, [n_fixed_actions, n_updated_actions], axis=-2)[2]
+            latents = jnp.split(latents, [n_fixed_actions, n_updated_actions], axis=-2)[2]
             # gradients = jax.grad(_policy_grads, argnums=0)(opp_params, updated_actions, action_gradients)
+            gradients = vgrad(_policy_grads, opp_params)
 
-            gradients = vgrad(updated_actions, opp_params)
+            def multiply_params(params1, params2):
+                # Ensure both dictionaries have the same structure
+                if params1.keys() != params2.keys():
+                    raise ValueError("Both parameter dictionaries must have the same structure.")
 
-            surrogate_loss = [w * g for w, g in zip(opp_params, gradients)]
+                # Create a new dictionary to store the results
+                result = {}
+
+                # Iterate over each key in the dictionary
+                for key in params1.keys():
+                    # Recursively multiply the parameters if they are dictionaries
+                    if isinstance(params1[key], dict):
+                        result[key] = multiply_params(params1[key], params2[key])
+                    else:
+                        # Element-wise multiplication for jax.numpy arrays
+                        result[key] = jnp.multiply(params1[key], params2[key])
+
+                return result
+
+            def extract_params_to_matrix(params):
+                # Flatten the dictionary into a list of arrays
+                def flatten_params(params):
+                    flattened = []
+                    for key, value in params.items():
+                        if isinstance(value, dict):
+                            flattened.extend(flatten_params(value))
+                        else:
+                            flattened.append(value.flatten())
+                    return flattened
+
+                    # Flatten the parameters and concatenate them into a single matrix
+
+                flattened_params = flatten_params(params)
+                matrix = jnp.concatenate(flattened_params).reshape(-1, 1)
+
+                return matrix
+
+            surrogate_loss = multiply_params(opp_params, gradients)
+            surrogate_loss = jnp.sum(extract_params_to_matrix(surrogate_loss))
 
             return -surrogate_loss
 
@@ -361,3 +403,4 @@ class PR2Agent(AgentBase):
         train_state = train_state._replace(opp_state=train_state.opp_state.apply_gradients(grads=grads))
 
         return train_state, mem_state, env_state, ac_in, key
+

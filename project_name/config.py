@@ -43,8 +43,8 @@ def get_config():
     config.NUM_ENVS = 8  # MUST BE SAME SIZE OR BIGGER THAN NUM_MINIBATCHES
     config.NUM_DEVICES = 1
 
-    config.WANDB = "disabled"  # "online" if want it to work
-    # config.WANDB = "online"
+    # config.WANDB = "disabled"  # "online" if want it to work
+    config.WANDB = "online"
 
     config.DISABLE_JIT = False
     # config.DISABLE_JIT = True
