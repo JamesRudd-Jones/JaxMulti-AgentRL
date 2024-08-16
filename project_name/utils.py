@@ -12,6 +12,10 @@ class MemoryState(NamedTuple):
     extras: Mapping[str, jnp.ndarray]
 
 
+class TrainStateExt(TrainState):
+    target_params: flax.core.FrozenDict
+
+
 class Transition(NamedTuple):
     global_done: jnp.ndarray
     done: jnp.ndarray

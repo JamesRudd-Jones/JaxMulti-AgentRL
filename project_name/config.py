@@ -29,6 +29,9 @@ def get_config():
     config.ANNEALING = 0.5  # TODO set this inside PR2 as it could be trained technically
     config.U_RANGE = 1.0
 
+    # ROMMEO
+    config.REGULARISER = 0.001
+
     # MELIBA
     config.LATENT_DIM = 2
     config.KL_WEIGHT = 0.01
@@ -43,15 +46,15 @@ def get_config():
     config.NUM_ENVS = 8  # MUST BE SAME SIZE OR BIGGER THAN NUM_MINIBATCHES
     config.NUM_DEVICES = 1
 
-    # config.WANDB = "disabled"  # "online" if want it to work
-    config.WANDB = "online"
+    config.WANDB = "disabled"  # "online" if want it to work
+    # config.WANDB = "online"
 
     config.DISABLE_JIT = False
     # config.DISABLE_JIT = True
 
     config.WANDB_ENTITY = "jamesr-j"  # change this to your wandb username
 
-    config.AGENT_TYPE = ["PR2", "T4T"]  # ["PPO", "PPO"]
+    config.AGENT_TYPE = ["ROMMEO", "T4T"]  # ["PPO", "PPO"]
     config.NUM_AGENTS = 2  # TODO is this really the best way?
 
     return config
