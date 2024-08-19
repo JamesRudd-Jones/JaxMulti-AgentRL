@@ -31,6 +31,10 @@ def get_config():
 
     # ROMMEO
     config.REGULARISER = 0.001
+    config.REPARAMETERISE = True
+    config.SQUASH = True
+    config.TARGET_UPDATE_INTERVAL = 1  # TODO check this
+    config.TAU = 0.01
 
     # MELIBA
     config.LATENT_DIM = 2
@@ -46,15 +50,15 @@ def get_config():
     config.NUM_ENVS = 8  # MUST BE SAME SIZE OR BIGGER THAN NUM_MINIBATCHES
     config.NUM_DEVICES = 1
 
-    config.WANDB = "disabled"  # "online" if want it to work
-    # config.WANDB = "online"
+    # config.WANDB = "disabled"  # "online" if want it to work
+    config.WANDB = "online"
 
     config.DISABLE_JIT = False
     # config.DISABLE_JIT = True
 
     config.WANDB_ENTITY = "jamesr-j"  # change this to your wandb username
 
-    config.AGENT_TYPE = ["ROMMEO", "T4T"]  # ["PPO", "PPO"]
+    config.AGENT_TYPE = ["ROMMEO", "ROMMEO"]  # ["PPO", "PPO"]
     config.NUM_AGENTS = 2  # TODO is this really the best way?
 
     return config

@@ -12,7 +12,7 @@ from .pax.envs.in_the_matrix import InTheMatrix, EnvParams as MatrixEnvParams
 from .pax.envs.iterated_matrix_game import IteratedMatrixGame, EnvParams
 # from .pax.agents.ppo.ppo import make_agent
 from .agents import Agent, MultiAgent
-from .utils import Transition, EvalTransition, ipd_visitation, Utils, UtilsCNN
+from .utils import Transition, EvalTransition, Utils, UtilsCNN
 import sys
 
 
@@ -24,7 +24,7 @@ def run_train(config):
         env_params = MatrixEnvParams(payoff_matrix=payoff, freeze_penalty=5)
         utils = UtilsCNN(config)  # TODO this a bit dodge
     else:
-        payoff = [[1,1], [0,8], [8,0], [-1,-1]]   # [[-1,-1], [-3,0], [0,-3], [-2,-2]]  # [[2, 2], [0, 3], [3, 0], [1, 1]]  # payoff matrix for the IPD
+        payoff = [[3, 3], [1, 4], [4, 1], [2, 2]]   # [[-1,-1], [-3,0], [0,-3], [-2,-2]]  # [[2, 2], [0, 3], [3, 0], [1, 1]]  # payoff matrix for the IPD
         env = IteratedMatrixGame(num_inner_steps=config.NUM_INNER_STEPS, num_outer_steps=config.NUM_META_STEPS)
         env_params = EnvParams(payoff_matrix=payoff)
         utils = Utils(config)  # TODO this a bit dodge
@@ -123,8 +123,7 @@ def run_train(config):
                     # This always follows the PB following agent_0
                     # "win_rate": metric["returned_won_episode"][:, :, 0][metric["returned_episode"][:, :, 0]].mean(),
                     # "env_step": update_steps * config.NUM_ENVS * config.NUM_INNER_STEPS,
-                    "env_stats": env_stats
-                    # TODO sort this out as a bit dodge
+                    # "env_stats": env_stats  # TODO readd env_stats
                 }
 
                 for idx, agent in enumerate(config.AGENT_TYPE):
@@ -133,9 +132,10 @@ def run_train(config):
 
                 wandb.log(metric_dict)
 
-            env_stats = jax.tree_util.tree_map(lambda x: x.mean(), utils.visitation(env_state,
-                                                                                    trajectory_batch,
-                                                                                    obs))
+            # env_stats = jax.tree_util.tree_map(lambda x: x.mean(), utils.visitation(env_state,
+            #                                                                         trajectory_batch,
+            #                                                                         obs))
+            env_stats = 0
 
             jax.experimental.io_callback(callback, None, trajectory_batch, env_stats)
 

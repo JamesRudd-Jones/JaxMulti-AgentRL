@@ -5,6 +5,8 @@ import jax.numpy as jnp
 from typing import NamedTuple, Any, Mapping
 import chex
 import jax
+from flax.training.train_state import TrainState
+import flax
 
 
 class MemoryState(NamedTuple):
@@ -180,6 +182,15 @@ def remove_element(arr, index):  # TODO can improve?
         return jnp.expand_dims(arr[:, :, 1 - index], -1)
     else:
         return jnp.concatenate([arr[:, :, :index], arr[:, :, index + 1:]])
+
+
+def remove_element_2(arr, index):  # TODO can improve?
+    if arr.shape[-2] == 1:
+        raise ValueError("Cannot remove element from an array of size 1")
+    elif arr.shape[-2] == 2:
+        return jnp.expand_dims(arr[:, :, 1 - index, :], -2)
+    else:
+        return jnp.concatenate([arr[:, :, :index, :], arr[:, :, index + 1:, :]])
 
 
 class Utils:

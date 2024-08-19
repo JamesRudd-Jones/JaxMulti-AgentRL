@@ -44,11 +44,13 @@ class ActorROMMEO(nn.Module):
     activation: str = "tanh"
 
     @nn.compact
-    def __call__(self, obs, opp_action):
+    def __call__(self, x):
         if self.activation == "relu":
             activation = nn.relu
         else:
             activation = nn.tanh
+
+        obs, opp_action = x
 
         concat_obs = jnp.concatenate((obs, opp_action), axis=-1)  # TODO pre with dense or not?
 
@@ -77,8 +79,7 @@ class OppNetworkROMMEO(nn.Module):  # TODO think can combine the above
         else:
             activation = nn.tanh
 
-        concat_obs = jnp.concatenate((obs, actions, latents), axis=-1)  #
-        embedding = nn.Dense(128, kernel_init=orthogonal(np.sqrt(2)), bias_init=constant(0.0))(concat_obs)
+        embedding = nn.Dense(128, kernel_init=orthogonal(np.sqrt(2)), bias_init=constant(0.0))(obs)
         embedding = activation(embedding)
         embedding = nn.Dense(128, kernel_init=orthogonal(np.sqrt(2)), bias_init=constant(0.0))(embedding)
         embedding = activation(embedding)

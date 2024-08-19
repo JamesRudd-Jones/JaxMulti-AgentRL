@@ -29,7 +29,7 @@ class MultiAgent(Agent):
 
     @partial(jax.jit, static_argnums=(0,))
     def act(self, train_state: Any, mem_state: Any, obs_batch: Any, last_done: Any, key: Any):  # TODO add better chex
-        action_n = jnp.zeros((self.config.NUM_AGENTS, self.config["NUM_ENVS"]), dtype=int)
+        action_n = jnp.zeros((self.config.NUM_AGENTS, self.config["NUM_ENVS"]))  # TODO this was a strict int
         value_n = jnp.zeros((self.config.NUM_AGENTS, self.config["NUM_ENVS"]))
         log_prob_n = jnp.zeros((self.config.NUM_AGENTS, self.config["NUM_ENVS"]))
         for agent in range(self.config.NUM_AGENTS):
