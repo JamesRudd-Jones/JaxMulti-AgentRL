@@ -4,11 +4,11 @@ import jax.numpy as jnp
 from typing import Any
 import jax.random as jrandom
 from functools import partial
-from project_name.agents.PPO.network import ActorCritic  # TODO sort out this class import ting
 import optax
 from flax.training.train_state import TrainState
 from project_name.utils import MemoryState
 from project_name.agents import AgentBase
+from project_name.agents.PPO import get_PPO_config, ActorCritic
 
 
 class PPOAgent(AgentBase):
@@ -18,6 +18,7 @@ class PPOAgent(AgentBase):
                  key,
                  config):
         self.config = config
+        self.agent_config = get_PPO_config()
         self.env = env
         self.env_params = env_params
         self.network = ActorCritic(env.action_space().n, config=config)
@@ -29,16 +30,16 @@ class PPOAgent(AgentBase):
         self.network_params = self.network.init(_key, init_x)
 
         def linear_schedule(count):  # TODO put this somewhere better
-            frac = (1.0 - (count // (config["NUM_MINIBATCHES"] * config["UPDATE_EPOCHS"])) / config["NUM_UPDATES"])
-            return config["LR"] * frac
+            frac = (1.0 - (count // (self.agent_config.NUM_MINIBATCHES * self.agent_config.UPDATE_EPOCHS)) / config.NUM_UPDATES)
+            return self.agent_config.LR * frac
 
-        if config["ANNEAL_LR"]:
-            self.tx = optax.chain(optax.clip_by_global_norm(config["MAX_GRAD_NORM"]),
-                                  optax.adam(learning_rate=linear_schedule, eps=1e-5),
+        if self.agent_config.ANNEAL_LR:
+            self.tx = optax.chain(optax.clip_by_global_norm(self.agent_config.MAX_GRAD_NORM),
+                                  optax.adam(learning_rate=linear_schedule, eps=self.agent_config.ADAM_EPS),
                                   )
         else:
-            self.tx = optax.chain(optax.clip_by_global_norm(config["MAX_GRAD_NORM"]),
-                                  optax.adam(config["LR"], eps=1e-5),
+            self.tx = optax.chain(optax.clip_by_global_norm(self.agent_config.MAX_GRAD_NORM),
+                                  optax.adam(self.agent_config.LR, eps=self.agent_config.ADAM_EPS),
                                   )
 
     def create_train_state(self):
@@ -92,8 +93,8 @@ class PPOAgent(AgentBase):
                     transition.value,
                     transition.reward,
                 )
-                delta = reward + self.config["GAMMA"] * next_value * (1 - done) - value
-                gae = (delta + self.config["GAMMA"] * self.config["GAE_LAMBDA"] * (1 - done) * gae)
+                delta = reward + self.agent_config.GAMMA * next_value * (1 - done) - value
+                gae = (delta + self.agent_config.GAMMA * self.agent_config.GAE_LAMBDA * (1 - done) * gae)
                 return (gae, value), gae
 
             _, advantages = jax.lax.scan(_get_advantages,
@@ -121,8 +122,8 @@ class PPOAgent(AgentBase):
                     log_prob = pi.log_prob(traj_batch.action)
 
                     # CALCULATE VALUE LOSS
-                    value_pred_clipped = traj_batch.value + (value - traj_batch.value).clip(-self.config["CLIP_EPS"],
-                                                                                            self.config["CLIP_EPS"])
+                    value_pred_clipped = traj_batch.value + (value - traj_batch.value).clip(-self.agent_config.CLIP_EPS,
+                                                                                            self.agent_config.CLIP_EPS)
                     value_losses = jnp.square(value - targets)
                     value_losses_clipped = jnp.square(value_pred_clipped - targets)
                     value_loss = 0.5 * jnp.maximum(value_losses, value_losses_clipped).mean(
@@ -133,16 +134,16 @@ class PPOAgent(AgentBase):
                     gae = (gae - gae.mean()) / (gae.std() + 1e-8)
                     loss_actor1 = ratio * gae
                     loss_actor2 = (jnp.clip(ratio,
-                                            1.0 - self.config["CLIP_EPS"],
-                                            1.0 + self.config["CLIP_EPS"],
+                                            1.0 - self.agent_config.CLIP_EPS,
+                                            1.0 + self.agent_config.CLIP_EPS,
                                             ) * gae)
                     loss_actor = -jnp.minimum(loss_actor1, loss_actor2)
                     loss_actor = loss_actor.mean(where=(1 - traj_batch.done))
                     entropy = pi.entropy().mean(where=(1 - traj_batch.done))
 
                     total_loss = (loss_actor
-                                  + self.config["VF_COEF"] * value_loss
-                                  - self.config["ENT_COEF"] * entropy
+                                  + self.agent_config.VF_COEF * value_loss
+                                  - self.agent_config.ENT_COEF * entropy
                                   )
 
                     return total_loss, (value_loss, loss_actor, entropy)
@@ -155,7 +156,7 @@ class PPOAgent(AgentBase):
             train_state, traj_batch, advantages, targets, key = update_state
             key, _key = jrandom.split(key)
 
-            permutation = jrandom.permutation(_key, self.config["NUM_ENVS"])
+            permutation = jrandom.permutation(_key, self.config.NUM_ENVS)
             traj_batch = jax.tree_map(lambda x: jnp.swapaxes(x, 0, 1), traj_batch)
             batch = (traj_batch,
                      jnp.swapaxes(advantages, 0, 1).squeeze(),
@@ -163,7 +164,7 @@ class PPOAgent(AgentBase):
             shuffled_batch = jax.tree_util.tree_map(lambda x: jnp.take(x, permutation, axis=1), batch)
 
             minibatches = jax.tree_util.tree_map(lambda x: jnp.swapaxes(
-                jnp.reshape(x, [x.shape[0], self.config["NUM_MINIBATCHES"], -1] + list(x.shape[2:]), ), 1, 0, ),
+                jnp.reshape(x, [x.shape[0], self.agent_config.NUM_MINIBATCHES, -1] + list(x.shape[2:]), ), 1, 0, ),
                                                  shuffled_batch, )
 
             train_state, total_loss = jax.lax.scan(_update_minbatch, train_state, minibatches)
@@ -179,7 +180,7 @@ class PPOAgent(AgentBase):
             return update_state, total_loss
 
         update_state = (train_state, traj_batch, advantages, targets, key)
-        update_state, loss_info = jax.lax.scan(_update_epoch, update_state, None, self.config["UPDATE_EPOCHS"])
+        update_state, loss_info = jax.lax.scan(_update_epoch, update_state, None, self.agent_config.UPDATE_EPOCHS)
         train_state, traj_batch, advantages, targets, key = update_state
 
         return train_state, mem_state, env_state, ac_in, key

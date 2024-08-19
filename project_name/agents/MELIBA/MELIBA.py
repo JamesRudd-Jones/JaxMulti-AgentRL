@@ -2,11 +2,8 @@ import chex
 import jax
 import jax.numpy as jnp
 import jax.random as jrandom
-from project_name.agents.MELIBA.hierarchical_sequential_VAE import HierarchicalSequentialVAE, EncoderRNN, \
-    DecoderRNN, Encoder, Decoder  # TODO sort this out
 from flax.training.train_state import TrainState
 import optax
-from project_name.agents.MELIBA.PPO import PPOAgent  # TODO sort this out
 from functools import partial
 import sys
 import flax.linen as nn
@@ -15,6 +12,7 @@ import flashbax as fbx
 import distrax
 from project_name.utils import remove_element
 from project_name.agents import AgentBase
+from ..MELIBA import get_MELIBA_config, HierarchicalSequentialVAE, EncoderRNN, DecoderRNN, Encoder, Decoder, PPOAgent
 
 
 class MemoryStateMELIBA(NamedTuple):
@@ -58,26 +56,27 @@ class MELIBAAgent(AgentBase):
         self.config = config
         self.env = env
         self.env_params = env_params
+        self.agent_config = get_MELIBA_config()
 
         init_x = (
-            jnp.zeros((1, config["NUM_ENVS"], env.observation_space(env_params).n)),  # states
-            jnp.zeros((1, config["NUM_ENVS"], config.NUM_AGENTS)),
+            jnp.zeros((1, config.NUM_ENVS, env.observation_space(env_params).n)),  # states
+            jnp.zeros((1, config.NUM_ENVS, config.NUM_AGENTS)),
             # env.action_space(env_params).n)),     # actions
-            jnp.zeros((1, config["NUM_ENVS"], 1)),  # rewards
-            jnp.zeros((1, config["NUM_ENVS"])))  # dones
+            jnp.zeros((1, config.NUM_ENVS, 1)),  # rewards
+            jnp.zeros((1, config.NUM_ENVS)))  # dones
 
         key, _key = jrandom.split(key)
         self.encoder = Encoder(config)
         self.decoder = Decoder(env.action_space(env_params).n, config)
         self.hsvae = HierarchicalSequentialVAE(env.action_space(env_params).n, config)
 
-        self.init_encoder_hstate = EncoderRNN.initialize_carry(config["NUM_ENVS"],
-                                                               config["GRU_HIDDEN_DIM"])  # TODO individual configs pls
-        self.init_decoder_hstate = DecoderRNN.initialize_carry(config["NUM_ENVS"], config["GRU_HIDDEN_DIM"])
+        self.init_encoder_hstate = EncoderRNN.initialize_carry(config.NUM_ENVS,
+                                                               self.agent_config.GRU_HIDDEN_DIM)
+        self.init_decoder_hstate = DecoderRNN.initialize_carry(config.NUM_ENVS, self.agent_config.GRU_HIDDEN_DIM)
 
         self.hsvae_params = self.hsvae.init(_key, self.init_encoder_hstate, self.init_decoder_hstate, init_x, key)
 
-        self.ppo = PPOAgent(env, env_params, key, config)
+        self.ppo = PPOAgent(env, env_params, key, config, self.agent_config)
 
         self.vae_buffer = fbx.make_trajectory_buffer(max_length_time_axis=config.NUM_INNER_STEPS * 100,  # TODO is this okay?
                                                            min_length_time_axis=0,  # TODO again is this okay?
@@ -85,7 +84,6 @@ class MELIBAAgent(AgentBase):
                                                            add_batch_size=config.NUM_ENVS,  # TODO is this right?
                                                            sample_sequence_length=config.NUM_INNER_STEPS+1,
                                                            period=1,  # TODO again is this okay?
-                                                           # device=config.DEVICE
                                                      )
 
         self.vae_buffer = self.vae_buffer.replace(init=jax.jit(self.vae_buffer.init),
@@ -98,7 +96,7 @@ class MELIBAAgent(AgentBase):
         ppo_state = self.ppo.create_train_state()
         return (TrainStateMELIBA(vae_state=TrainState.create(apply_fn=self.hsvae.apply,
                                                              params=self.hsvae_params,
-                                                             tx=optax.adam(self.config["LR"])),
+                                                             tx=optax.adam(self.agent_config.LR)),
                                  ppo_state=ppo_state[0]),
                 MemoryStateMELIBA(ppo_hstate=ppo_state[1],
                                   encoder_hstate=self.init_encoder_hstate,
@@ -115,9 +113,9 @@ class MELIBAAgent(AgentBase):
                                   extras={
                                       "values": jnp.zeros((self.config.NUM_ENVS, 1)),
                                       "log_probs": jnp.zeros((self.config.NUM_ENVS, 1)),
-                                      "latent_sample": jnp.zeros((1, self.config.NUM_ENVS, self.config.LATENT_DIM)),
-                                      "latent_mean": jnp.zeros((1, self.config.NUM_ENVS, self.config.LATENT_DIM)),
-                                      "latent_logvar": jnp.zeros((1, self.config.NUM_ENVS, self.config.LATENT_DIM)),
+                                      "latent_sample": jnp.zeros((1, self.config.NUM_ENVS, self.agent_config.LATENT_DIM)),
+                                      "latent_mean": jnp.zeros((1, self.config.NUM_ENVS, self.agent_config.LATENT_DIM)),
+                                      "latent_logvar": jnp.zeros((1, self.config.NUM_ENVS, self.agent_config.LATENT_DIM)),
                                   }, ),
                 )
 
@@ -132,14 +130,14 @@ class MELIBAAgent(AgentBase):
         mem_state = mem_state._replace(extras={
             "values": jnp.zeros((self.config.NUM_ENVS, 1)),
             "log_probs": jnp.zeros((self.config.NUM_ENVS, 1)),
-            "latent_sample": jnp.zeros((1, self.config.NUM_ENVS, self.config.LATENT_DIM)),
-            "latent_mean": jnp.zeros((1, self.config.NUM_ENVS, self.config.LATENT_DIM)),
-            "latent_logvar": jnp.zeros((1, self.config.NUM_ENVS, self.config.LATENT_DIM)),
+            "latent_sample": jnp.zeros((1, self.config.NUM_ENVS, self.agent_config.LATENT_DIM)),
+            "latent_mean": jnp.zeros((1, self.config.NUM_ENVS, self.agent_config.LATENT_DIM)),
+            "latent_logvar": jnp.zeros((1, self.config.NUM_ENVS, self.agent_config.LATENT_DIM)),
             # TODO should these reset to 0 or not idk?
         },
             ppo_hstate=self.ppo.create_train_state()[1],
-            encoder_hstate=jnp.zeros((self.config.NUM_ENVS, self.config.GRU_HIDDEN_DIM)),
-            decoder_hstate=jnp.zeros((self.config.NUM_ENVS, self.config.GRU_HIDDEN_DIM)),
+            encoder_hstate=jnp.zeros((self.config.NUM_ENVS, self.agent_config.GRU_HIDDEN_DIM)),
+            decoder_hstate=jnp.zeros((self.config.NUM_ENVS, self.agent_config.GRU_HIDDEN_DIM)),
         )
         return mem_state
 
@@ -354,7 +352,7 @@ class MELIBAAgent(AgentBase):
             print(total_action_loss)
             print("NEW ONE")
 
-            loss = self.config["KL_WEIGHT"] * kl_loss + total_action_loss
+            loss = self.agent_config.KL_WEIGHT * kl_loss + total_action_loss
 
             pi = distrax.Categorical(logits=future_action_logits)
             key, _key = jrandom.split(key)

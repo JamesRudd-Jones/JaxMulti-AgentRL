@@ -4,8 +4,7 @@ import jax.numpy as jnp
 from typing import Any
 import jax.random as jrandom
 from functools import partial
-from project_name.agents.PR2.network import ActorPR2, JointCriticPR2, IndCriticPR2, \
-    OppNetworkPR2  # TODO sort out this class import ting
+from ..PR2 import get_PR2_config, ActorPR2, JointCriticPR2, IndCriticPR2, OppNetworkPR2, adaptive_isotropic_gaussian_kernel
 import optax
 from flax.training.train_state import TrainState
 from project_name.utils import MemoryState
@@ -14,7 +13,6 @@ from typing import NamedTuple
 import flax
 from project_name.agents import AgentBase
 from project_name.utils import remove_element
-from project_name.agents.PR2.kernel import adaptive_isotropic_gaussian_kernel
 
 
 class TrainStateExt(TrainState):
@@ -42,6 +40,7 @@ class PR2Agent(AgentBase):
                  key,
                  config):
         self.config = config
+        self.agent_config = get_PR2_config()
         self.env = env
         self.env_params = env_params
         self.joint_critic_network = JointCriticPR2(config=config)
@@ -70,12 +69,12 @@ class PR2Agent(AgentBase):
                                                                    config.NUM_AGENTS - 1))
                                                         )
 
-        self.per_buffer = fbx.make_prioritised_flat_buffer(max_length=config.BUFFER_SIZE,
-                                                           min_length=config.BATCH_SIZE,
-                                                           sample_batch_size=config.BATCH_SIZE,
+        self.per_buffer = fbx.make_prioritised_flat_buffer(max_length=self.agent_config.BUFFER_SIZE,
+                                                           min_length=self.agent_config.BATCH_SIZE,
+                                                           sample_batch_size=self.agent_config.BATCH_SIZE,
                                                            add_sequences=True,
                                                            add_batch_size=None,
-                                                           priority_exponent=config.REPLAY_PRIORITY_EXP,
+                                                           priority_exponent=self.agent_config.REPLAY_PRIORITY_EXP,
                                                            device=config.DEVICE)
 
         self.per_buffer = self.per_buffer.replace(init=jax.jit(self.per_buffer.init),
@@ -84,18 +83,7 @@ class PR2Agent(AgentBase):
                                                   can_sample=jax.jit(self.per_buffer.can_sample),
                                                   )
 
-        def linear_schedule(count):  # TODO put this somewhere better
-            frac = (1.0 - (count // (config["NUM_MINIBATCHES"] * config["UPDATE_EPOCHS"])) / config["NUM_UPDATES"])
-            return config["LR"] * frac
-
-        if config["ANNEAL_LR"]:
-            self.tx = optax.chain(optax.clip_by_global_norm(config["MAX_GRAD_NORM"]),
-                                  optax.adam(learning_rate=linear_schedule, eps=1e-5),
-                                  )
-        else:
-            self.tx = optax.chain(optax.clip_by_global_norm(config["MAX_GRAD_NORM"]),
-                                  optax.adam(config["LR"], eps=1e-5),
-                                  )
+        self.tx = optax.adam(self.agent_config.LR, eps=1e-5)
 
     def create_train_state(self):
         return (TrainStatePR2(joint_critic_state=TrainStateExt.create(apply_fn=self.joint_critic_network.apply,
@@ -164,13 +152,13 @@ class PR2Agent(AgentBase):
             naction = jnp.swapaxes(naction, 1, 2)
             naction_ego = jnp.expand_dims(naction[:, :, agent], -1)
             # naction_opp = train_state.opp_state.apply_fn(opp_params, obs, naction_ego)
-            naction_opp = jrandom.uniform(key, (self.config.BATCH_SIZE, self.config.NUM_ENVS, self.config.VALUE_N_PARTICLES, 1))
+            naction_opp = jrandom.uniform(key, (self.agent_config.BATCH_SIZE, self.config.NUM_ENVS, self.agent_config.VALUE_N_PARTICLES, 1))
             # TODO could this not be the actions that were actually taken by opponents ??
 
             # shape batch_size, num_envs, value_n_particles
-            nobs = jnp.tile(jnp.expand_dims(nobs, axis=-2), (1, 1, self.config.VALUE_N_PARTICLES, 1))
-            ndone = jnp.tile(jnp.expand_dims(ndone, axis=-1), (1, 1, self.config.VALUE_N_PARTICLES))
-            naction_ego = jnp.tile(jnp.expand_dims(naction_ego, axis=-2), (1, 1, self.config.VALUE_N_PARTICLES, 1))
+            nobs = jnp.tile(jnp.expand_dims(nobs, axis=-2), (1, 1, self.agent_config.VALUE_N_PARTICLES, 1))
+            ndone = jnp.tile(jnp.expand_dims(ndone, axis=-1), (1, 1, self.agent_config.VALUE_N_PARTICLES))
+            naction_ego = jnp.tile(jnp.expand_dims(naction_ego, axis=-2), (1, 1, self.agent_config.VALUE_N_PARTICLES, 1))
             joint_target_value = train_state.joint_critic_state.apply_fn(critic_target_params,
                                                                          (nobs, ndone),
                                                                          naction_ego,
@@ -184,12 +172,12 @@ class PR2Agent(AgentBase):
                                                               action_ego,
                                                               action_opp)
 
-            target_value = self.config.ANNEALING * jnp.log(
-                jnp.sum(jnp.exp((joint_target_value / self.config.ANNEALING)), axis=-1))
-            target_value -= jnp.log(self.config.VALUE_N_PARTICLES)
+            target_value = self.agent_config.ANNEALING * jnp.log(
+                jnp.sum(jnp.exp((joint_target_value / self.agent_config.ANNEALING)), axis=-1))
+            target_value -= jnp.log(self.agent_config.VALUE_N_PARTICLES)
             target_value += (1) * jnp.log(2)  # TODO should be opponent action dim?
 
-            target_q = jax.lax.stop_gradient(reward + (1 - done) * self.config.GAMMA * (target_value))
+            target_q = jax.lax.stop_gradient(reward + (1 - done) * self.agent_config.GAMMA * (target_value))
 
             critic_loss = 0.5 * jnp.mean(jnp.square(target_q - joint_q))
 
@@ -246,20 +234,20 @@ class PR2Agent(AgentBase):
                 obs, jnp.expand_dims(done, axis=-1)))  # TODO remove done part at some point as not needed
             action_ego = jnp.expand_dims(pi.sample(seed=key), -1)  # TODO actions bit dodge as tryna do discrete with continuous the rest lol
 
-            obs = jnp.tile(jnp.expand_dims(obs, axis=-2), (1, 1, self.config.VALUE_N_PARTICLES, 1))
-            action_ego = jnp.tile(jnp.expand_dims(action_ego, axis=-2), (1, 1, self.config.VALUE_N_PARTICLES, 1))
+            obs = jnp.tile(jnp.expand_dims(obs, axis=-2), (1, 1, self.agent_config.VALUE_N_PARTICLES, 1))
+            action_ego = jnp.tile(jnp.expand_dims(action_ego, axis=-2), (1, 1, self.agent_config.VALUE_N_PARTICLES, 1))
             latents = jrandom.normal(key, action_ego.shape)
             action_opp = train_state.opp_state.apply_fn(opp_params, obs, action_ego, latents)
 
-            nobs = jnp.tile(jnp.expand_dims(nobs, axis=-2), (1, 1, self.config.VALUE_N_PARTICLES, 1))
-            ndone = jnp.tile(jnp.expand_dims(ndone, axis=-1), (1, 1, self.config.VALUE_N_PARTICLES))
+            nobs = jnp.tile(jnp.expand_dims(nobs, axis=-2), (1, 1, self.agent_config.VALUE_N_PARTICLES, 1))
+            ndone = jnp.tile(jnp.expand_dims(ndone, axis=-1), (1, 1, self.agent_config.VALUE_N_PARTICLES))
             q_targets = train_state.joint_critic_state.apply_fn(critic_params, (nobs, ndone),
                                                          action_ego,
                                                          action_opp)
 
-            q_targets = self.config.ANNEALING * jnp.log(
-                jnp.sum(jnp.exp((q_targets / self.config.ANNEALING)), axis=-1))
-            q_targets -= jnp.log(self.config.VALUE_N_PARTICLES)
+            q_targets = self.agent_config.ANNEALING * jnp.log(
+                jnp.sum(jnp.exp((q_targets / self.agent_config.ANNEALING)), axis=-1))
+            q_targets -= jnp.log(self.agent_config.VALUE_N_PARTICLES)
             q_targets += (1) * jnp.log(2)  # TODO should be opponent action dim not 1?
 
             pg_loss = -jnp.mean(q_targets)
@@ -288,13 +276,13 @@ class PR2Agent(AgentBase):
 
             action = jnp.swapaxes(action, 1, 2)
             action_ego = jnp.expand_dims(action[:, :, agent], -1)
-            kernel_obs = jnp.tile(jnp.expand_dims(obs, axis=-2), (1, 1, self.config.KERNEL_N_PARTICLES, 1))
-            kernel_action_ego = jnp.tile(jnp.expand_dims(action_ego, axis=-2), (1, 1, self.config.KERNEL_N_PARTICLES, 1))
+            kernel_obs = jnp.tile(jnp.expand_dims(obs, axis=-2), (1, 1, self.agent_config.KERNEL_N_PARTICLES, 1))
+            kernel_action_ego = jnp.tile(jnp.expand_dims(action_ego, axis=-2), (1, 1, self.agent_config.KERNEL_N_PARTICLES, 1))
             latents = jrandom.normal(key, kernel_action_ego.shape)
             action_opp = train_state.opp_state.apply_fn(opp_params, kernel_obs, kernel_action_ego, latents)
 
-            n_updated_actions = int(self.config.KERNEL_N_PARTICLES * self.config.KERNEL_UPDATE_RATIO)
-            n_fixed_actions = self.config.KERNEL_N_PARTICLES - n_updated_actions
+            n_updated_actions = int(self.agent_config.KERNEL_N_PARTICLES * self.agent_config.KERNEL_UPDATE_RATIO)
+            n_fixed_actions = self.agent_config.KERNEL_N_PARTICLES - n_updated_actions
 
             combo_actions = jnp.split(action_opp, [n_fixed_actions, n_updated_actions], axis=-2)
             fixed_actions = combo_actions[0]
@@ -312,7 +300,7 @@ class PR2Agent(AgentBase):
                 baseline_ind_q = train_state.ind_critic_state.apply_fn(ind_critic_params, (obs, jnp.expand_dims(done, axis=-1)),
                                                                 action_ego)
                 baseline_ind_q = jnp.tile(jnp.expand_dims(baseline_ind_q, axis=-1), (1, 1, n_fixed_actions))
-                svgd_q_target = (svgd_q_target - baseline_ind_q) / self.config.ANNEALING
+                svgd_q_target = (svgd_q_target - baseline_ind_q) / self.agent_config.ANNEALING
 
                 squash_correction = jnp.sum(jnp.log(1 - fixed_actions ** 2 + 1e-6), axis=-1)
 

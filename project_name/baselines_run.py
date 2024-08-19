@@ -24,7 +24,7 @@ def run_train(config):
         env_params = MatrixEnvParams(payoff_matrix=payoff, freeze_penalty=5)
         utils = UtilsCNN(config)  # TODO this a bit dodge
     else:
-        payoff = [[3, 3], [1, 4], [4, 1], [2, 2]]   # [[-1,-1], [-3,0], [0,-3], [-2,-2]]  # [[2, 2], [0, 3], [3, 0], [1, 1]]  # payoff matrix for the IPD
+        payoff = [[2, 2], [0, 3], [3, 0], [1, 1]]  # payoff matrix for the IPD
         env = IteratedMatrixGame(num_inner_steps=config.NUM_INNER_STEPS, num_outer_steps=config.NUM_META_STEPS)
         env_params = EnvParams(payoff_matrix=payoff)
         utils = Utils(config)  # TODO this a bit dodge
@@ -106,10 +106,7 @@ def run_train(config):
             runner_state, trajectory_batch = jax.lax.scan(_run_episode_step, runner_state, None, config.NUM_INNER_STEPS)
             train_state, mem_state, env_state, obs, done, key = runner_state
 
-            # some if statement if MFOS agent to take a meta action too maybe make a mask or something
-            mem_state = actor.meta_act(mem_state)  # TODO is there a better way than this?
-
-            # needs the below to add the new trajectory_buffer
+            mem_state = actor.meta_act(mem_state)
 
             last_obs_batch = utils.batchify_obs(obs, range(config.NUM_AGENTS), config.NUM_AGENTS, config.NUM_ENVS)
             train_state, mem_state, env_state, last_obs_batch, done, key = actor.update(train_state, mem_state,
@@ -118,13 +115,9 @@ def run_train(config):
                                                                                         trajectory_batch)
 
             def callback(metrics, env_stats):
-                metric_dict = {
-                    # "returns": metric["returned_episode_returns"][:, :, 0][metric["returned_episode"][:, :, 0]].mean(),
-                    # This always follows the PB following agent_0
-                    # "win_rate": metric["returned_won_episode"][:, :, 0][metric["returned_episode"][:, :, 0]].mean(),
-                    # "env_step": update_steps * config.NUM_ENVS * config.NUM_INNER_STEPS,
-                    # "env_stats": env_stats  # TODO readd env_stats
-                }
+                metric_dict = {  # "env_step": update_steps * config.NUM_ENVS * config.NUM_INNER_STEPS,
+                               "env_stats": env_stats
+                              }
 
                 for idx, agent in enumerate(config.AGENT_TYPE):
                     metric_dict[f"avg_reward_{agent}_{idx}"] = metrics.reward[:, idx, :].mean()
@@ -132,10 +125,9 @@ def run_train(config):
 
                 wandb.log(metric_dict)
 
-            # env_stats = jax.tree_util.tree_map(lambda x: x.mean(), utils.visitation(env_state,
-            #                                                                         trajectory_batch,
-            #                                                                         obs))
-            env_stats = 0
+            env_stats = jax.tree_util.tree_map(lambda x: x.mean(), utils.visitation(env_state,
+                                                                                    trajectory_batch,
+                                                                                    obs))
 
             jax.experimental.io_callback(callback, None, trajectory_batch, env_stats)
 
@@ -147,7 +139,7 @@ def run_train(config):
             (train_state, mem_state, env_state, obs, last_done, key), update_steps = meta_runner_state
 
             # reset env here actually I think
-            # TODOthis feels dodgy re ending of episodes in trajectories etc but seems what they have done
+            # TODO this feels dodgy re ending of episodes in trajectories etc but seems what they have done
             key, _key = jrandom.split(key)  # TODO is this necessary?
             reset_key = jrandom.split(_key, config.NUM_ENVS)
             obs, env_state = jax.vmap(env.reset, in_axes=(0, None), axis_name="batch_axis")(reset_key, env_params)

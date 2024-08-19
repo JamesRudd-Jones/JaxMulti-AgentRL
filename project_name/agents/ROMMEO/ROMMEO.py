@@ -4,7 +4,7 @@ import jax.numpy as jnp
 from typing import Any
 import jax.random as jrandom
 from functools import partial
-from project_name.agents.ROMMEO.network import ActorROMMEO, JointCriticROMMEO, OppNetworkROMMEO
+from ..ROMMEO import get_ROMMEO_config, ActorROMMEO, JointCriticROMMEO, OppNetworkROMMEO
 import optax
 from flax.training.train_state import TrainState
 from project_name.utils import MemoryState, TrainStateExt
@@ -43,18 +43,26 @@ class ROMMEOAgent(AgentBase):
                  key,
                  config):
         self.config = config
+        self.agent_config = get_ROMMEO_config()
         self.env = env
         self.env_params = env_params
         self.critic_network = JointCriticROMMEO(config=config)
-        self.actor_network = ActorROMMEO(  # action_dim=env.action_space(env_params).n,
-                                         1,  # TODO is it one idk need to sort this out?
-                                         config=config)
-        self.opp_network = OppNetworkROMMEO(  # action_dim=config.NUM_AGENTS - 1,  # TODO how to get the above?
-                                            # action_dim=env.action_space(env_params).n,
-            1,
-                                            config=config)  # TODO is num agents dim okay?
-        self.opp_prior = OppNetworkROMMEO(action_dim=config.NUM_AGENTS - 1,
-                                          config=config)  # TODO is num agents dim okay?
+        if config.DISCRETE:
+            self.actor_network = ActorROMMEO(  # action_dim=env.action_space(env_params).n,
+                action_dim=env.action_space(env_params).n,
+                config=self.agent_config)
+            self.opp_network = OppNetworkROMMEO(  # action_dim=config.NUM_AGENTS - 1,  # TODO how to get the above?
+                action_dim=env.action_space(env_params).n,
+                config=self.agent_config)  # TODO is num agents dim okay?
+            self.opp_prior = OppNetworkROMMEO(action_dim=env.action_space(env_params).n,
+                                              config=config)
+        else:
+            self.actor_network = ActorROMMEO(action_dim=1,
+                                             config=config)
+            self.opp_network = OppNetworkROMMEO(action_dim=1,
+                                                config=self.agent_config)  # TODO is num agents dim okay?
+            self.opp_prior = OppNetworkROMMEO(action_dim=1,
+                                              config=self.agent_config)  # TODO is num agents dim okay?
 
         key, _key = jrandom.split(key)
 
@@ -69,12 +77,11 @@ class ROMMEOAgent(AgentBase):
                                                             init_opp_actions))
         self.opp_network_params = self.opp_network.init(_key, init_x)
 
-        self.per_buffer = fbx.make_prioritised_flat_buffer(max_length=config.BUFFER_SIZE,
-                                                           min_length=config.BATCH_SIZE,
-                                                           sample_batch_size=config.BATCH_SIZE,
+        self.per_buffer = fbx.make_flat_buffer(max_length=self.agent_config.BUFFER_SIZE,
+                                                           min_length=self.agent_config.BATCH_SIZE,
+                                                           sample_batch_size=self.agent_config.BATCH_SIZE,
                                                            add_sequences=True,
                                                            add_batch_size=None,
-                                                           priority_exponent=config.REPLAY_PRIORITY_EXP,
                                                            device=config.DEVICE)
 
         self.per_buffer = self.per_buffer.replace(init=jax.jit(self.per_buffer.init),
@@ -83,24 +90,14 @@ class ROMMEOAgent(AgentBase):
                                                   can_sample=jax.jit(self.per_buffer.can_sample),
                                                   )
 
-        def linear_schedule(count):  # TODO put this somewhere better
-            frac = (1.0 - (count // (config["NUM_MINIBATCHES"] * config["UPDATE_EPOCHS"])) / config["NUM_UPDATES"])
-            return config["LR"] * frac
-
-        if config["ANNEAL_LR"]:
-            self.tx = optax.chain(optax.clip_by_global_norm(config["MAX_GRAD_NORM"]),
-                                  optax.adam(learning_rate=linear_schedule, eps=1e-5),
-                                  )
-        else:
-            self.tx = optax.chain(optax.clip_by_global_norm(config["MAX_GRAD_NORM"]),
-                                  optax.adam(config["LR"], eps=1e-5),
-                                  )
-
-    def _squash_correction(self, actions):
-        # return 0
-        return jnp.sum(jnp.log(1 - jnp.tanh(actions) ** 2 + 1e-6), axis=-1)  # TODO which axis?
+        self.tx = optax.adam(self.agent_config.LR, eps=1e-5)
 
     def create_train_state(self):
+        if self.agent_config.DISCRETE:
+            action_type = jnp.int32
+        else:
+            action_type = jnp.float32
+
         return (TrainStateROMMEO(critic_state=TrainStateExt.create(apply_fn=self.critic_network.apply,
                                                                    params=self.critic_network_params,
                                                                    target_params=self.critic_network_params,
@@ -118,8 +115,7 @@ class ROMMEOAgent(AgentBase):
                                                                tx=self.tx)),
                 self.per_buffer.init(
                     TransitionROMMEO(done=jnp.zeros((self.config.NUM_ENVS), dtype=bool),
-                                     action=jnp.zeros((self.config.NUM_AGENTS, self.config.NUM_ENVS), dtype=jnp.float32),
-                                     # action=jnp.zeros((self.config.NUM_AGENTS, self.config.NUM_ENVS), dtype=jnp.int32),  # TODO for discrete actions
+                                     action=jnp.zeros((self.config.NUM_AGENTS, self.config.NUM_ENVS), dtype=action_type),
                                      reward=jnp.zeros((self.config.NUM_ENVS)),
                                      obs=jnp.zeros(
                                          (self.config.NUM_ENVS, self.env.observation_space(self.env_params).n),
@@ -133,24 +129,18 @@ class ROMMEOAgent(AgentBase):
                                      )))
 
     @partial(jax.jit, static_argnums=(0,))
+    def _squash_correction(self, actions):
+        # return 0
+        return jnp.sum(jnp.log(1 - jnp.tanh(actions) ** 2 + 1e-6), axis=-1)  # TODO which axis?
+
+    @partial(jax.jit, static_argnums=(0,))
     def reset_memory(self,
                      mem_state):  # TODO don't think should ever reset the buffer right? but should reset the rest?
         return mem_state
 
     @partial(jax.jit, static_argnums=(0,))
     def act(self, train_state: Any, mem_state: Any, ac_in: chex.Array, key: chex.PRNGKey):
-        # dist, _, _ = train_state.actor_state.apply_fn(train_state.actor_state.params, ac_in)
-        # TODO should this be target params or actual params?
         value = jnp.zeros((1))  # TODO don't need to track it for ROMMEO update but double check
-        # x_t = dist.sample(seed=_key)
-        # if not self.config.REPARAMETRISE:
-        #     x_t = jax.lax.stop_gradient(x_t)
-        # log_prob = dist.log_prob(x_t)
-        #
-        # if self.config.SQUASH:
-        #     actions = nn.tanh(x_t)
-        # else:
-        #     actions = x_t
         action_opp, _, _ = jax.lax.stop_gradient(self._opp_or_ego_model_act(train_state.opp_state,
                                                                             train_state.opp_state.params,
                                                                             ac_in[0],
@@ -165,18 +155,21 @@ class ROMMEOAgent(AgentBase):
         dist, mu, log_sig = specific_train_state.apply_fn(params, ins)
         key, _key = jrandom.split(key)
         x_t = dist.sample(seed=_key)
-        if not self.config.REPARAMETERISE:
+        if not self.agent_config.REPARAMETERISE:
             x_t = jax.lax.stop_gradient(x_t)
         log_prob = dist.log_prob(x_t)
 
-        reg_loss = self.config.REGULARISER * 0.5 * jnp.mean(log_sig ** 2)
+        reg_loss = self.agent_config.REGULARISER * 0.5 * jnp.mean(log_sig ** 2)
         # TODO should this be within the loss section?
-        reg_loss = reg_loss + self.config.REGULARISER * 0.5 * jnp.mean(mu ** 2)
+        reg_loss = reg_loss + self.agent_config.REGULARISER * 0.5 * jnp.mean(mu ** 2)
 
-        if self.config.SQUASH:
-            actions = flax.linen.tanh(x_t)
+        if self.agent_config.DISCRETE:  # TODO 100% improve this loL
+            actions = jnp.expand_dims(x_t, axis=-1)
         else:
-            actions = x_t
+            if self.agent_config.SQUASH:
+                actions = flax.linen.tanh(x_t)
+            else:
+                actions = x_t
 
         return actions, log_prob, reg_loss
 
@@ -184,14 +177,17 @@ class ROMMEOAgent(AgentBase):
     def _get_opponent_prior(self, specific_train_state: Any, params: dict, obs: chex.Array, actions: chex.Array):
         dist, mu, log_sig = specific_train_state.apply_fn(params, obs)
 
-        raw_actions = jnp.tanh(actions)
+        if self.agent_config.DISCRETE:
+            raw_actions = jnp.squeeze(actions, axis=-1)
+            log_prob = dist.log_prob(raw_actions)
+        else:
+            raw_actions = jnp.tanh(actions)
+            log_prob = dist.log_prob(raw_actions)
+            log_prob = log_prob - self._squash_correction(raw_actions)
 
-        log_prob = dist.log_prob(raw_actions)
-        log_prob = log_prob - self._squash_correction(raw_actions)
-
-        reg_loss = self.config.REGULARISER * 0.5 * jnp.mean(log_sig ** 2)
+        reg_loss = self.agent_config.REGULARISER * 0.5 * jnp.mean(log_sig ** 2)
         # TODO should this be within the loss section?
-        reg_loss = reg_loss + self.config.REGULARISER * 0.5 * jnp.mean(mu ** 2)
+        reg_loss = reg_loss + self.agent_config.REGULARISER * 0.5 * jnp.mean(mu ** 2)
 
         return log_prob, reg_loss
 
@@ -251,7 +247,7 @@ class ROMMEOAgent(AgentBase):
                                                               action_opp)
 
             opp_p_loss = jnp.mean(action_opp_logprob) - jnp.mean(prior_logprob) - jnp.mean(
-                joint_q) + self.config.ANNEALING * jnp.mean(action_ego_logprob)
+                joint_q) + self.agent_config.ANNEALING * jnp.mean(action_ego_logprob)
             opp_p_loss += reg_loss
 
             return opp_p_loss
@@ -289,7 +285,7 @@ class ROMMEOAgent(AgentBase):
                                                                naction_ego,
                                                                naction_opp)
 
-            joint_target_q = joint_target_q - self.config.ANNEALING * naction_ego_logprob - naction_opp_logprob + prior_logprob
+            joint_target_q = joint_target_q - self.agent_config.ANNEALING * naction_ego_logprob - naction_opp_logprob + prior_logprob
 
             # use Q-values only for the taken actions
             action = jnp.swapaxes(action, 1, 2)
@@ -299,7 +295,7 @@ class ROMMEOAgent(AgentBase):
                                                               action_ego,
                                                               action_opp)
 
-            target_q = jax.lax.stop_gradient(reward + (1 - done) * self.config.GAMMA * (joint_target_q))
+            target_q = jax.lax.stop_gradient(reward + (1 - done) * self.agent_config.GAMMA * (joint_target_q))
 
             critic_loss = 0.5 * jnp.mean(jnp.square(target_q - joint_q))
 
@@ -335,7 +331,7 @@ class ROMMEOAgent(AgentBase):
                                                               action_ego,
                                                               action_opp)
 
-            pg_loss = self.config.ANNEALING * jnp.mean(action_ego_logprob) - jnp.mean(joint_q)
+            pg_loss = self.agent_config.ANNEALING * jnp.mean(action_ego_logprob) - jnp.mean(joint_q)
             pg_loss = pg_loss + reg_loss
 
             return pg_loss
@@ -351,12 +347,12 @@ class ROMMEOAgent(AgentBase):
 
         def update_targets(spec_train_state):
             new_train_state = jax.lax.cond(
-                spec_train_state.step % self.config.TARGET_UPDATE_INTERVAL == 0,
+                spec_train_state.step % self.agent_config.TARGET_UPDATE_INTERVAL == 0,
                 lambda spec_train_state: spec_train_state.replace(
                     target_params=optax.incremental_update(
                         spec_train_state.params,
                         spec_train_state.target_params,
-                        self.config.TAU,
+                        self.agent_config.TAU,
                     )
                 ),
                 lambda spec_train_state: spec_train_state,

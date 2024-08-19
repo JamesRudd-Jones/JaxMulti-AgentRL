@@ -10,6 +10,7 @@ from typing import Sequence, NamedTuple, Any, Dict
 import distrax
 import seaborn as sns
 import matplotlib.pyplot as plt
+from ml_collections import ConfigDict
 
 
 class ScannedRNN(nn.Module):
@@ -53,13 +54,14 @@ class CNNtoLinear(nn.Module):
 
 class ActorCriticRNN(nn.Module):
     action_dim: Sequence[int]
-    config: Dict
+    config: ConfigDict
+    agent_config: ConfigDict
 
     @nn.compact
     def __call__(self, hidden, x):
         obs, dones = x
 
-        if self.config["CNN"]:
+        if self.config.CNN:
             embedding = CNNtoLinear()(obs)
         else:
             embedding = nn.Dense(128, kernel_init=orthogonal(np.sqrt(2)), bias_init=constant(0.0))(obs)
@@ -68,7 +70,7 @@ class ActorCriticRNN(nn.Module):
         rnn_in = (embedding, dones)
         hidden, embedding = ScannedRNN()(hidden, rnn_in)
 
-        actor_mean = nn.Dense(self.config["GRU_HIDDEN_DIM"], kernel_init=orthogonal(2), bias_init=constant(0.0))(
+        actor_mean = nn.Dense(self.agent_config.GRU_HIDDEN_DIM, kernel_init=orthogonal(2), bias_init=constant(0.0))(
             embedding)
         actor_mean = nn.relu(actor_mean)
         actor_mean = nn.Dense(self.action_dim, kernel_init=orthogonal(0.01), bias_init=constant(0.0))(actor_mean)
