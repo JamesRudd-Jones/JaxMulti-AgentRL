@@ -8,7 +8,7 @@ import optax
 from flax.training.train_state import TrainState
 from project_name.utils import MemoryState
 from project_name.agents import AgentBase
-from ..NAIVE import get_NAIVE_config, ActorCritic
+from project_name.agents.NAIVE import get_NAIVE_config, ActorCritic
 
 
 class NAIVEAgent(AgentBase):
@@ -171,7 +171,7 @@ class NAIVEAgent(AgentBase):
             return update_state, total_loss
 
         update_state = (train_state, traj_batch, advantages, targets, key)
-        update_state, loss_info = jax.lax.scan(_update_epoch, update_state, None, self.config.UPDATE_EPOCHS)
+        update_state, loss_info = jax.lax.scan(_update_epoch, update_state, None, self.agent_config.UPDATE_EPOCHS)
         train_state, traj_batch, advantages, targets, key = update_state
 
         return train_state, mem_state, env_state, ac_in, key

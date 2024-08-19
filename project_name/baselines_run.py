@@ -24,7 +24,7 @@ def run_train(config):
         env_params = MatrixEnvParams(payoff_matrix=payoff, freeze_penalty=5)
         utils = UtilsCNN(config)  # TODO this a bit dodge
     else:
-        payoff = [[2, 2], [0, 3], [3, 0], [1, 1]]  # payoff matrix for the IPD
+        payoff = [[-1, -1], [-3, 0], [0, -3], [-2, -2]]  # payoff matrix for the IPD
         env = IteratedMatrixGame(num_inner_steps=config.NUM_INNER_STEPS, num_outer_steps=config.NUM_META_STEPS)
         env_params = EnvParams(payoff_matrix=payoff)
         utils = Utils(config)  # TODO this a bit dodge
@@ -129,7 +129,7 @@ def run_train(config):
                                                                                     trajectory_batch,
                                                                                     obs))
 
-            jax.experimental.io_callback(callback, None, trajectory_batch, env_stats)
+            # jax.experimental.io_callback(callback, None, trajectory_batch, env_stats)
 
             # update_steps = update_steps + 1
 
@@ -169,7 +169,24 @@ def run_train(config):
                                                                                              collapsed_trajectory_batch)
             # TODO benchmark if need to output last_obs_batch and env_state and done or not as they don't change?
 
-            metric = meta_trajectory_batch.info
+            def callback(metrics, env_stats):
+                metric_dict = {  # "env_step": update_steps * config.NUM_ENVS * config.NUM_INNER_STEPS,
+                               "env_stats": env_stats
+                              }
+
+                for idx, agent in enumerate(config.AGENT_TYPE):
+                    metric_dict[f"avg_reward_{agent}_{idx}"] = metrics.reward[:, idx, :].mean()
+                    # TODO above is so so dodgy
+
+                wandb.log(metric_dict)
+
+            env_stats = jax.tree_util.tree_map(lambda x: x.mean(), utils.visitation(env_state,
+                                                                                    collapsed_trajectory_batch,
+                                                                                    obs))
+
+            jax.experimental.io_callback(callback, None, collapsed_trajectory_batch, env_stats)
+            metric = collapsed_trajectory_batch.info
+
             # update_steps = update_steps + 1  # TODO should add separate update for inner and outer? not sure about this
 
             # TODO reset memory again?

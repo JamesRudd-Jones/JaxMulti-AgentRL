@@ -9,7 +9,7 @@ def get_MFOS_config():
     config.GRU_HIDDEN_DIM = 16 * 3  # to make it divisible by 3 for MFOS
     config.GAE_LAMBDA = 0.95
     config.UPDATE_EPOCHS = 2
-    config.NUM_MINIBATCHES = 4
+    config.NUM_MINIBATCHES = 2  # 4
     config.CLIP_EPS = 0.2
     config.VF_COEF = 0.5
     config.ENT_COEF = 0.01

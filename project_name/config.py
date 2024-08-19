@@ -10,10 +10,10 @@ def get_config():
     # config.CNN = True
 
     # config.TOTAL_TIMESTEPS = 10000000
-    config.NUM_UPDATES = 10  # 40000  # 10000
+    config.NUM_UPDATES = 20  # 40000  # 10000
     config.NUM_INNER_STEPS = 100  # 128
     config.NUM_META_STEPS = 100  # 500
-    config.NUM_ENVS = 8  # TODO should add an assert for this - MUST BE SAME SIZE OR BIGGER THAN NUM_MINIBATCHES
+    config.NUM_ENVS = 2  # 8  # TODO should add an assert for this - MUST BE SAME SIZE OR BIGGER THAN NUM_MINIBATCHES
     config.NUM_DEVICES = 1
 
     # config.WANDB = "disabled"  # "online" if want it to work
@@ -24,7 +24,7 @@ def get_config():
 
     config.WANDB_ENTITY = "jamesr-j"  # change this to your wandb username
 
-    config.AGENT_TYPE = ["MFOS", "PPO"]  # ["PPO", "PPO"]
+    config.AGENT_TYPE = ["MFOS", "ROMMEO"]  # ["PPO", "PPO"]
     config.NUM_AGENTS = 2  # TODO is this really the best way?
 
     return config

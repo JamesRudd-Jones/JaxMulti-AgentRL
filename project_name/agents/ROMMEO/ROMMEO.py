@@ -4,7 +4,7 @@ import jax.numpy as jnp
 from typing import Any
 import jax.random as jrandom
 from functools import partial
-from ..ROMMEO import get_ROMMEO_config, ActorROMMEO, JointCriticROMMEO, OppNetworkROMMEO
+from project_name.agents.ROMMEO import get_ROMMEO_config, ActorROMMEO, JointCriticROMMEO, OppNetworkROMMEO
 import optax
 from flax.training.train_state import TrainState
 from project_name.utils import MemoryState, TrainStateExt
@@ -47,22 +47,22 @@ class ROMMEOAgent(AgentBase):
         self.env = env
         self.env_params = env_params
         self.critic_network = JointCriticROMMEO(config=config)
-        if config.DISCRETE:
+        if self.agent_config.DISCRETE:
             self.actor_network = ActorROMMEO(  # action_dim=env.action_space(env_params).n,
                 action_dim=env.action_space(env_params).n,
-                config=self.agent_config)
+                agent_config=self.agent_config)
             self.opp_network = OppNetworkROMMEO(  # action_dim=config.NUM_AGENTS - 1,  # TODO how to get the above?
                 action_dim=env.action_space(env_params).n,
-                config=self.agent_config)  # TODO is num agents dim okay?
+                agent_config=self.agent_config)  # TODO is num agents dim okay?
             self.opp_prior = OppNetworkROMMEO(action_dim=env.action_space(env_params).n,
-                                              config=config)
+                                              agent_config=self.agent_config)
         else:
             self.actor_network = ActorROMMEO(action_dim=1,
-                                             config=config)
+                                             agent_config=self.agent_config)
             self.opp_network = OppNetworkROMMEO(action_dim=1,
-                                                config=self.agent_config)  # TODO is num agents dim okay?
+                                                agent_config=self.agent_config)  # TODO is num agents dim okay?
             self.opp_prior = OppNetworkROMMEO(action_dim=1,
-                                              config=self.agent_config)  # TODO is num agents dim okay?
+                                              agent_config=self.agent_config)  # TODO is num agents dim okay?
 
         key, _key = jrandom.split(key)
 
@@ -81,8 +81,7 @@ class ROMMEOAgent(AgentBase):
                                                            min_length=self.agent_config.BATCH_SIZE,
                                                            sample_batch_size=self.agent_config.BATCH_SIZE,
                                                            add_sequences=True,
-                                                           add_batch_size=None,
-                                                           device=config.DEVICE)
+                                                           add_batch_size=None)
 
         self.per_buffer = self.per_buffer.replace(init=jax.jit(self.per_buffer.init),
                                                   add=jax.jit(self.per_buffer.add, donate_argnums=0),
