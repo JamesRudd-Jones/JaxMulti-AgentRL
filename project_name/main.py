@@ -4,6 +4,7 @@ import wandb
 from project_name.config import get_config  # TODO dodge need to know how to fix this
 import jax
 from jax.lib import xla_bridge
+import jax.profiler
 
 
 def main(_):
@@ -23,7 +24,10 @@ def main(_):
 
     with jax.disable_jit(disable=config.DISABLE_JIT):
         train = jax.jit(run_train(config))
-        out = train()
+        out = jax.block_until_ready(train())  # .block_until_ready()
+        jax.profiler.save_device_memory_profile("memory.prof")
+
+    print("FINITO")
 
 
 if __name__ == '__main__':

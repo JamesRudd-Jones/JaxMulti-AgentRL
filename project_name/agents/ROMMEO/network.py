@@ -59,21 +59,21 @@ class ActorROMMEO(nn.Module):
         embedding = nn.Dense(128, kernel_init=orthogonal(np.sqrt(2)), bias_init=constant(0.0))(embedding)
         embedding = activation(embedding)
 
-        if self.agent_config.DISCRETE:
-            actor_mean = nn.Dense(self.action_dim, kernel_init=orthogonal(0.01), bias_init=constant(0.0))(embedding)
-            pi = distrax.Categorical(logits=actor_mean)
+        # if self.agent_config.DISCRETE:
+        actor_mean = nn.Dense(self.action_dim, kernel_init=orthogonal(0.01), bias_init=constant(0.0))(embedding)
+        pi = distrax.Categorical(logits=actor_mean)
 
-            return pi, jnp.zeros_like(actor_mean), jnp.zeros_like(actor_mean)
+        return pi, jnp.zeros_like(actor_mean), jnp.zeros_like(actor_mean)
 
-        else:
-            mu_and_logsig = nn.Dense(2 * self.action_dim, kernel_init=orthogonal(0.01), bias_init=constant(0.0))(embedding)
-
-            mu = mu_and_logsig[..., :self.action_dim]
-            log_sig = jnp.clip(mu_and_logsig[..., self.action_dim:], -20, 2)  # TODO hardcoded but maybe should change?
-
-            dist = distrax.MultivariateNormalDiag(mu, jnp.exp(log_sig) + 0.01)
-
-            return dist, mu, log_sig
+        # else:
+        #     mu_and_logsig = nn.Dense(2 * self.action_dim, kernel_init=orthogonal(0.01), bias_init=constant(0.0))(embedding)
+        #
+        #     mu = mu_and_logsig[..., :self.action_dim]
+        #     log_sig = jnp.clip(mu_and_logsig[..., self.action_dim:], -20, 2)  # TODO hardcoded but maybe should change?
+        #
+        #     dist = distrax.MultivariateNormalDiag(mu, jnp.exp(log_sig) + 0.01)
+        #
+        #     return dist, mu, log_sig
 
 class OppNetworkROMMEO(nn.Module):  # TODO think can combine the above
     action_dim: Sequence[int]
@@ -92,18 +92,18 @@ class OppNetworkROMMEO(nn.Module):  # TODO think can combine the above
         embedding = nn.Dense(128, kernel_init=orthogonal(np.sqrt(2)), bias_init=constant(0.0))(embedding)
         embedding = activation(embedding)
 
-        if self.agent_config.DISCRETE:
-            actor_mean = nn.Dense(self.action_dim, kernel_init=orthogonal(0.01), bias_init=constant(0.0))(embedding)
-            pi = distrax.Categorical(logits=actor_mean)
+        # if self.agent_config.DISCRETE:
+        actor_mean = nn.Dense(self.action_dim, kernel_init=orthogonal(0.01), bias_init=constant(0.0))(embedding)
+        pi = distrax.Categorical(logits=actor_mean)
 
-            return pi, jnp.zeros_like(actor_mean), jnp.zeros_like(actor_mean)
+        return pi, jnp.zeros_like(actor_mean), jnp.zeros_like(actor_mean)
 
-        else:
-            mu_and_logsig = nn.Dense(2 * self.action_dim, kernel_init=orthogonal(0.01), bias_init=constant(0.0))(embedding)
-
-            mu = mu_and_logsig[..., :self.action_dim]
-            log_sig = jnp.clip(mu_and_logsig[..., self.action_dim:], -20, 2)  # TODO hardcoded but maybe should change?
-
-            dist = distrax.MultivariateNormalDiag(mu, jnp.exp(log_sig)+0.01)
-
-            return dist, mu, log_sig
+        # else:
+        #     mu_and_logsig = nn.Dense(2 * self.action_dim, kernel_init=orthogonal(0.01), bias_init=constant(0.0))(embedding)
+        #
+        #     mu = mu_and_logsig[..., :self.action_dim]
+        #     log_sig = jnp.clip(mu_and_logsig[..., self.action_dim:], -20, 2)  # TODO hardcoded but maybe should change?
+        #
+        #     dist = distrax.MultivariateNormalDiag(mu, jnp.exp(log_sig)+0.01)
+        #
+        #     return dist, mu, log_sig

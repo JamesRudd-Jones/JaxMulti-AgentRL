@@ -24,7 +24,7 @@ def run_train(config):
         env_params = MatrixEnvParams(payoff_matrix=payoff, freeze_penalty=5)
         utils = UtilsCNN(config)  # TODO this a bit dodge
     else:
-        payoff = [[-1, -1], [-3, 0], [0, -3], [-2, -2]]  # payoff matrix for the IPD
+        payoff = [[3, 3], [1, 4], [4, 1], [2, 2]]  # [[-1, -1], [-3, 0], [0, -3], [-2, -2]]  # payoff matrix for the IPD
         env = IteratedMatrixGame(num_inner_steps=config.NUM_INNER_STEPS, num_outer_steps=config.NUM_META_STEPS)
         env_params = EnvParams(payoff_matrix=payoff)
         utils = Utils(config)  # TODO this a bit dodge
@@ -129,7 +129,8 @@ def run_train(config):
                                                                                     trajectory_batch,
                                                                                     obs))
 
-            # jax.experimental.io_callback(callback, None, trajectory_batch, env_stats)
+            if "MFOS" not in config.AGENT_TYPE:
+                jax.experimental.io_callback(callback, None, trajectory_batch, env_stats)
 
             # update_steps = update_steps + 1
 
@@ -140,14 +141,12 @@ def run_train(config):
 
             # reset env here actually I think
             # TODO this feels dodgy re ending of episodes in trajectories etc but seems what they have done
-            key, _key = jrandom.split(key)  # TODO is this necessary?
+            key, _key = jrandom.split(key)
             reset_key = jrandom.split(_key, config.NUM_ENVS)
             obs, env_state = jax.vmap(env.reset, in_axes=(0, None), axis_name="batch_axis")(reset_key, env_params)
 
             # reset agents memory apparently as well, do I need this?
             mem_state = actor.reset_memory(mem_state)
-
-            # TODO initialise naive agents here or when using meta agents
 
             runner_state = (train_state, mem_state, env_state, obs,
                             jnp.zeros((config.NUM_AGENTS, config.NUM_ENVS), dtype=bool), key)
@@ -167,7 +166,6 @@ def run_train(config):
                                                                                              env_state,
                                                                                              last_obs_batch, done, key,
                                                                                              collapsed_trajectory_batch)
-            # TODO benchmark if need to output last_obs_batch and env_state and done or not as they don't change?
 
             def callback(metrics, env_stats):
                 metric_dict = {  # "env_step": update_steps * config.NUM_ENVS * config.NUM_INNER_STEPS,
@@ -189,15 +187,14 @@ def run_train(config):
 
             # update_steps = update_steps + 1  # TODO should add separate update for inner and outer? not sure about this
 
-            # TODO reset memory again?
-
             return ((train_state, mem_state, env_state, obs, done, key), update_steps), metric
 
-        # TODO some conditional only running the meta_update if required for meta-training at all
+        # conditional only running the meta_update if required for meta-training at all
         # TODO add something so if do meta or not then they run the same number of total timesteps basically
-        runner_state, metric = jax.lax.scan(_run_meta_update, (runner_state, 1), None, config.NUM_UPDATES)
-        # TODO else it just runs it num_updates times
-        # runner_state, metric = jax.lax.scan(_run_inner_update, (runner_state, 0), None, config.NUM_UPDATES)
+        # if "MFOS" in config.AGENT_TYPE:
+        #     runner_state, metric = jax.lax.scan(_run_meta_update, (runner_state, 1), None, config.NUM_UPDATES)
+        # else:
+        runner_state, metric = jax.lax.scan(_run_inner_update, (runner_state, 0), None, config.NUM_UPDATES)
 
         return {"runner_state": runner_state, "metrics": metric}
 

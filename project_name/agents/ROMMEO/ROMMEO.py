@@ -33,7 +33,6 @@ class TransitionROMMEO(NamedTuple):
     action: jnp.ndarray
     reward: jnp.ndarray
     obs: jnp.ndarray
-    opp_obs: jnp.ndarray
 
 
 class ROMMEOAgent(AgentBase):
@@ -117,12 +116,7 @@ class ROMMEOAgent(AgentBase):
                                      action=jnp.zeros((self.config.NUM_AGENTS, self.config.NUM_ENVS), dtype=action_type),
                                      reward=jnp.zeros((self.config.NUM_ENVS)),
                                      obs=jnp.zeros(
-                                         (self.config.NUM_ENVS, self.env.observation_space(self.env_params).n),
-                                         dtype=jnp.int8),
-                                     # TODO is it always an int for the obs?
-                                     opp_obs=jnp.zeros(
-                                         (self.config.NUM_AGENTS, self.config.NUM_ENVS, self.env.observation_space(self.env_params).n,
-                                          ),
+                                         (self.config.NUM_AGENTS, self.config.NUM_ENVS, self.env.observation_space(self.env_params).n),
                                          dtype=jnp.int8),
                                      # TODO is it always an int for the obs?
                                      )))
@@ -197,26 +191,24 @@ class ROMMEOAgent(AgentBase):
         mem_state = self.per_buffer.add(mem_state, TransitionROMMEO(done=traj_batch.done[:, agent, :],
                                                                     action=traj_batch.action,
                                                                     reward=traj_batch.reward[:, agent, :],
-                                                                    obs=traj_batch.obs[:, agent, :],
-                                                                    opp_obs=traj_batch.obs,
+                                                                    obs=traj_batch.obs,
                                                                     ))
 
         key, _key = jrandom.split(key)
         batch = self.per_buffer.sample(mem_state, _key)
 
         def _opp_prior_loss(prior_params, batch):
-            tot_obs = batch.experience.first.opp_obs  # TODO its recent_opp_obs??
+            obs = batch.experience.first.obs
             action = batch.experience.first.action
 
             action = jnp.swapaxes(action, 1, 2)
             action_opp = remove_element(action, agent)
 
-            tot_obs = jnp.swapaxes(tot_obs, 1, 2)
-            opp_obs = remove_element_2(tot_obs, agent)
+            obs = jnp.swapaxes(obs, 1, 2)
+            obs_opp = remove_element_2(obs, agent)
+            obs_opp = jnp.squeeze(obs_opp, axis=-2)  # TODO for now reducing dims for only one opponent but should change this at some point
 
-            opp_obs = jnp.squeeze(opp_obs, axis=-2)  # TODO for now reducing dims for only one opponent but should change this at some point
-
-            log_prob, reg_loss = self._get_opponent_prior(train_state.prior_state, prior_params, opp_obs, action_opp)
+            log_prob, reg_loss = self._get_opponent_prior(train_state.prior_state, prior_params, obs_opp, action_opp)
 
             loss = -jnp.mean(log_prob) + reg_loss
 
@@ -231,6 +223,9 @@ class ROMMEOAgent(AgentBase):
 
         def _opp_policy_loss(opp_params, prior_params, critic_params, actor_params, batch, key):
             obs = batch.experience.first.obs
+
+            obs = jnp.swapaxes(obs, 1, 2)
+            obs = obs[:, :, agent]
 
             action_opp, action_opp_logprob, reg_loss = self._opp_or_ego_model_act(train_state.opp_state, opp_params,
                                                                                   obs, key)
@@ -267,6 +262,12 @@ class ROMMEOAgent(AgentBase):
             reward = batch.experience.first.reward
             done = batch.experience.first.done
             nobs = batch.experience.second.obs
+
+            obs = jnp.swapaxes(obs, 1, 2)
+            obs = obs[:, :, agent]
+
+            nobs = jnp.swapaxes(nobs, 1, 2)
+            nobs = nobs[:, :, agent]
 
             naction_opp, naction_opp_logprob, _ = self._opp_or_ego_model_act(train_state.opp_state, opp_target_params, nobs,
                                                                              key)
@@ -317,6 +318,9 @@ class ROMMEOAgent(AgentBase):
 
         def _actor_loss(actor_params, critic_params, opp_params, batch, key):
             obs = batch.experience.first.obs
+
+            obs = jnp.swapaxes(obs, 1, 2)
+            obs = obs[:, :, agent]
 
             action_opp, action_opp_logprob, _ = self._opp_or_ego_model_act(train_state.opp_state, opp_params, obs,
                                                                            key)

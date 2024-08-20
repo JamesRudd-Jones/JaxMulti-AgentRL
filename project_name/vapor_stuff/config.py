@@ -32,8 +32,8 @@ def get_config():
 
     config.BATCH_SIZE = 32
 
-    # config.WANDB = "disabled"  # "online" if want it to work
-    config.WANDB = "online"
+    config.WANDB = "disabled"  # "online" if want it to work
+    # config.WANDB = "online"
 
     config.WANDB_ENTITY = "jamesr-j"  # change this to your wandb username
 
