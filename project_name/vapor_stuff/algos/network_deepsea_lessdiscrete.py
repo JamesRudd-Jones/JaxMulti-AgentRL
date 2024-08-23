@@ -30,7 +30,23 @@ class SoftQNetwork(nn.Module):
 
         q_vals = nn.Dense(1, kernel_init=kaiming_normal(), bias_init=constant(0.0))(embedding)
 
-        return jnp.squeeze(q_vals, axis=-1)
+        return q_vals
+
+
+class DoubleSoftQNetwork(nn.Module):
+    action_dim: int
+
+    def setup(self):
+        self.qf_1 = SoftQNetwork(self.action_dim)
+        self.qf_2 = SoftQNetwork(self.action_dim)
+
+    def __call__(self, x, a):
+        qf1 = self.qf_1(x, a)
+        qf2 = self.qf_2(x, a)
+
+        qf_result = jnp.concatenate((jnp.expand_dims(qf1, axis=-1), jnp.expand_dims(qf2, axis=-1)), axis=-1)
+
+        return qf_result
 
 
 class Actor(nn.Module):

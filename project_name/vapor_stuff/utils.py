@@ -8,3 +8,4 @@ class TransitionNoInfo:
     reward: chex.Array
     ensemble_reward: chex.Array
     done: chex.Array
+    logits: chex.Array

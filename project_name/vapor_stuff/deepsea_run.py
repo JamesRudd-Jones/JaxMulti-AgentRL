@@ -4,7 +4,7 @@ import jax.random as jrandom
 from project_name.vapor_stuff.config import get_config  # TODO dodge need to know how to fix this
 import wandb
 import gymnax
-from project_name.vapor_stuff.algos import VAPOR_Lite, SAC
+from project_name.vapor_stuff.algos import VAPOR_Lite, SAC, VAPOR_Lite_Less_Discrete
 from typing import NamedTuple
 import chex
 from project_name.vapor_stuff.utils import TransitionNoInfo
@@ -16,16 +16,18 @@ class Transition(NamedTuple):
     reward: chex.Array
     ensemble_reward: chex.Array
     done: chex.Array
+    logits: chex.Array
     info: jnp.ndarray
 
 
 def run_train(config):
-    env, env_params = gymnax.make("DeepSea-bsuite", size=30)  # TODO edited the gymnax env for deepsea for info
+    env, env_params = gymnax.make("DeepSea-bsuite", size=config.DEEPSEA_SIZE)  # TODO edited the gymnax env for deepsea for info
 
     def train():
         key = jax.random.PRNGKey(config.SEED)
 
         actor = VAPOR_Lite(env, env_params, key, config)
+        # actor = VAPOR_Lite_Less_Discrete(env, env_params, key, config)
         # actor = SAC(env, env_params, key, config)
 
         # ensrpr relates to ensembled randomised prior reward state
@@ -57,7 +59,7 @@ def run_train(config):
                 #                                                    obs[jnp.newaxis, :, :, jnp.newaxis],
                 #                                                    key
                 #                                                    )
-                action, _, _, key = actor.act(actor_state.params, obs[jnp.newaxis, :, :, jnp.newaxis], key)
+                action, _, _, logits, key = actor.act(actor_state.params, obs[jnp.newaxis, :, :, jnp.newaxis], key)
                 # action = jnp.ones((1), dtype=int)
 
                 # step in env
@@ -73,7 +75,7 @@ def run_train(config):
                 info["bad_episode"] = env_state.env_state.bad_episode
 
                 # update tings my dude
-                transition = Transition(obs[:, :, jnp.newaxis], action, reward[jnp.newaxis], jitter_reward, done[jnp.newaxis], info)
+                transition = Transition(obs[:, :, jnp.newaxis], action, reward[jnp.newaxis], jitter_reward, done[jnp.newaxis], jnp.squeeze(logits, axis=0), info)
 
                 return (actor_state, critic_state, ensrpr_state, buffer_state, nenv_state, nobs, done, key), transition
 
@@ -87,7 +89,8 @@ def run_train(config):
                                                                                action=trajectory_batch.action,
                                                                                reward=trajectory_batch.reward,
                                                                                ensemble_reward=trajectory_batch.ensemble_reward,
-                                                                               done=trajectory_batch.done))
+                                                                               done=trajectory_batch.done,
+                                                                               logits=trajectory_batch.logits))
             # TODO maybe refresh the above so a bit better
             # needs the below to add the new trajectory_buffer
             runner_state = actor_state, critic_state, ensrpr_state, buffer_state, env_state, obs, done, key

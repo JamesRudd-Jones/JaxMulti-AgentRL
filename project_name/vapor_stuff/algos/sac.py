@@ -8,7 +8,7 @@ from functools import partial
 from typing import Any, Tuple
 import distrax
 
-from project_name.vapor_stuff.algos.network_deepsea import SoftQNetwork, Actor
+from project_name.vapor_stuff.algos.network_deepsea import SoftQNetwork, Actor, DoubleSoftQNetwork
 from flax.training.train_state import TrainState
 import optax
 import flashbax as fbx
@@ -26,7 +26,7 @@ class SAC:
         self.env = env
         self.env_params = env_params
         self.actor_network = Actor(action_dim=env.action_space(env_params).n)
-        self.critic_network = SoftQNetwork(action_dim=env.action_space(env_params).n)
+        self.critic_network = DoubleSoftQNetwork(action_dim=env.action_space(env_params).n)
 
         key, actor_key, critic_key = jrandom.split(key, 3)
 
@@ -109,8 +109,9 @@ class SAC:
             _, next_state_log_pi, next_state_action_probs, key = self.act(actor_params, nobs, key)
 
             qf_next_target = self.critic_network.apply(critic_target_params, nobs)
+            qf_next_target = jnp.min(qf_next_target, axis=-1)
 
-            qf_next_target = next_state_action_probs * (qf_next_target) #  - self.config.ALPHA * next_state_log_pi)
+            qf_next_target = next_state_action_probs * (qf_next_target)  #   - (self.config.ALPHA * next_state_log_pi))
             # TODO above have removed entropy from policy evaluation
 
             # adapt Q-target for discrete Q-function
@@ -121,13 +122,14 @@ class SAC:
             # TODO should use done or discount? I think these match up
 
             # use Q-values only for the taken actions
-            qf1_values = self.critic_network.apply(critic_params, obs)
-            qf1_a_values = jnp.take_along_axis(qf1_values, action, axis=1)
+            qf_values = self.critic_network.apply(critic_params, obs)
+            qf_values = jnp.min(qf_values, axis=-1)
+            qf1_a_values = jnp.take_along_axis(qf_values, action, axis=1)
 
             td_error = qf1_a_values - next_q_value  # TODO ensure this okay as other stuff vmaps over time?
 
             # mse loss below
-            qf_loss = 0.5 * jnp.mean(jnp.square(td_error))  # TODO check this is okay?
+            # qf_loss = 0.5 * jnp.mean(jnp.square(td_error))  # TODO check this is okay?
 
             # Get the importance weights.
             importance_weights = (1. / batch.priorities).astype(jnp.float32)
@@ -135,7 +137,7 @@ class SAC:
             importance_weights /= jnp.max(importance_weights)
 
             # reweight
-            qf_loss = jnp.mean(importance_weights * qf_loss)
+            qf_loss = 0.5 * jnp.mean(importance_weights * jnp.square(td_error))
             new_priorities = jnp.abs(td_error) + 1e-7
 
             return qf_loss, new_priorities[:, 0]  # to remove the last dimensions of new_priorities
@@ -157,6 +159,7 @@ class SAC:
             obs = batch.experience.first.state
 
             min_qf_values = self.critic_network.apply(critic_params, obs)  # TODO ensure it uses the right params
+            min_qf_values = jnp.min(min_qf_values, axis=-1)
 
             _, log_pi, action_probs, _ = self.act(actor_params, obs, key)
 

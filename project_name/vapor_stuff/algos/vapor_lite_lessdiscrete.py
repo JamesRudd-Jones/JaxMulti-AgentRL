@@ -9,7 +9,7 @@ from functools import partial
 from typing import Any, Tuple
 import distrax
 
-from project_name.vapor_stuff.algos.network_deepsea_lessdiscrete import SoftQNetwork, Actor, RandomisedPrior
+from project_name.vapor_stuff.algos.network_deepsea_lessdiscrete import SoftQNetwork, Actor, RandomisedPrior, DoubleSoftQNetwork
 from flax.training.train_state import TrainState
 import optax
 import flashbax as fbx
@@ -30,7 +30,7 @@ class VAPOR_Lite:
         self.env = env
         self.env_params = env_params
         self.actor_network = Actor(action_dim=env.action_space(env_params).n)
-        self.critic_network = SoftQNetwork(action_dim=env.action_space(env_params).n)
+        self.critic_network = DoubleSoftQNetwork(action_dim=env.action_space(env_params).n)
         self.rp_network = RandomisedPrior()
 
         key, actor_key, critic_key = jrandom.split(key, 3)
@@ -97,16 +97,11 @@ class VAPOR_Lite:
         policy_dist = distrax.Categorical(logits=logits)
         action = policy_dist.sample(seed=_key)
         log_prob = policy_dist.log_prob(action)
-        # action_probs = policy_dist.prob(action)
-        action_probs = policy_dist.probs
-        z = action_probs == 0.0
-        z = z * 1e-8
-        log_prob = jnp.log(action_probs + z)  # TODO idk if this is right but eyo
-
-        # pi_s, log_pi_s = self.actor_network.apply(actor_params, obs)
-        # action = jnp.argmax(pi_s, axis=1)  # TODO is it an argmax or is it a sample?
-        #
-        # return action, log_pi_s, pi_s, key
+        action_probs = policy_dist.prob(action)
+        # action_probs = policy_dist.probs
+        # z = action_probs == 0.0
+        # z = z * 1e-8
+        # log_prob = jnp.log(action_probs + z)  # TODO idk if this is right but eyo
 
         return action, log_prob, action_probs, key
 
@@ -169,30 +164,28 @@ class VAPOR_Lite:
             done = batch.experience.first.done
             nobs = batch.experience.second.state
 
-            next_state_actions, next_state_log_pi, next_state_action_probs, key = self.act(actor_params, nobs, key)
-            next_state_actions = jnp.expand_dims(next_state_actions, axis=-1)
+            nactions, next_state_log_pi, next_state_action_probs, key = self.act(actor_params, nobs, key)
+            nactions = jnp.expand_dims(nactions, axis=-1)
 
-            qf1_next_target = self.critic_network.apply(critic_target_params, nobs, next_state_actions)
+            qf_next_target = self.critic_network.apply(critic_target_params, nobs, nactions)
+            qf_next_target = jnp.min(qf_next_target, axis=-1)
 
             # next_state_reward_noise = self._reward_noise_over_actions(ensrpr_state, nobs)
-            next_state_reward_noise = self._get_reward_noise(ensrpr_state, nobs, next_state_actions)
+            next_state_action_reward_noise = self._get_reward_noise(ensrpr_state, nobs, nactions)
             state_action_reward_noise = self._get_reward_noise(ensrpr_state, obs, action)
-            min_qf_next_target = qf1_next_target - (next_state_reward_noise * next_state_action_probs * next_state_log_pi)
-
-            # adapt Q-target for discrete Q-function
-            min_qf_next_target = min_qf_next_target.sum(axis=1)[:, jnp.newaxis]
+            min_qf_next_target = qf_next_target - (next_state_action_reward_noise * jnp.expand_dims(next_state_log_pi, axis=-1))
 
             # VAPOR-LITE
             next_q_value = reward + state_action_reward_noise + (1 - done) * self.config.GAMMA * (min_qf_next_target)
 
             # use Q-values only for the taken actions
-            qf1_values = self.critic_network.apply(critic_params, obs)
-            qf1_a_values = jnp.take_along_axis(qf1_values, action, axis=1)
+            qf_a_values = self.critic_network.apply(critic_params, obs, action)
+            qf_a_values = jnp.min(qf_a_values, axis=-1)
 
-            td_error = qf1_a_values - next_q_value  # TODO ensure this okay as other stuff vmaps over time?
+            td_error = qf_a_values - next_q_value  # TODO ensure this okay as other stuff vmaps over time?
 
             # mse loss below
-            qf_loss = jnp.mean(td_error ** 2)  # TODO check this is okay?
+            # qf_loss = jnp.mean(td_error ** 2)  # TODO check this is okay?
 
             # Get the importance weights.
             importance_weights = (1. / batch.priorities).astype(jnp.float32)
@@ -200,7 +193,7 @@ class VAPOR_Lite:
             importance_weights /= jnp.max(importance_weights)
 
             # reweight
-            qf_loss = jnp.mean(importance_weights * qf_loss)
+            qf_loss = 0.5 * jnp.mean(importance_weights * jnp.square(td_error))
             new_priorities = jnp.abs(td_error) + 1e-7
 
             return qf_loss, new_priorities[:, 0]  # to remove the last dimensions of new_priorities
@@ -221,13 +214,15 @@ class VAPOR_Lite:
         def actor_loss(actor_params, critic_params, batch, key):
             obs = batch.experience.first.state
 
-            min_qf_values = self.critic_network.apply(critic_params, obs)  # TODO ensure it uses the right params
+            actions, log_pi, _, key = self.act(actor_params, obs, key)
+            actions = jnp.expand_dims(actions, axis=-1)
 
-            state_reward_noise = self._reward_noise_over_actions(ensrpr_state, obs)
+            min_qf_values = self.critic_network.apply(critic_params, obs, actions)  # TODO ensure it uses the right params
+            min_qf_values = jnp.min(min_qf_values, axis=-1)
 
-            _, log_pi, action_probs, _ = self.act(actor_params, obs, key)
+            state_action_reward_noise = self._get_reward_noise(ensrpr_state, obs, actions)
 
-            return jnp.mean(action_probs * ((state_reward_noise * action_probs * log_pi) - min_qf_values))
+            return jnp.mean((state_action_reward_noise * log_pi) - min_qf_values)
 
         actor_loss, grads = jax.value_and_grad(actor_loss, argnums=0)(actor_state.params,
                                                            critic_state.params,
@@ -240,11 +235,10 @@ class VAPOR_Lite:
             def reward_predictor_loss(rp_params, prior_params):
                 rew_pred = indrpr_state.apply_fn(
                     {"params": {"static_prior": prior_params, "trainable": rp_params}}, (obs, actions))
-                loss = jnp.mean(jnp.square(rew_pred - rewards))
-                return loss, rew_pred
+                return 0.5 * jnp.mean(jnp.square(rew_pred - rewards))
 
-            (ensemble_loss, reward_preds), grads = jax.value_and_grad(reward_predictor_loss, argnums=0, has_aux=True)(
-                indrpr_state.params, indrpr_state.static_prior_params)
+            ensemble_loss, grads = jax.value_and_grad(reward_predictor_loss, argnums=0)(indrpr_state.params,
+                                                                                        indrpr_state.static_prior_params)
             indrpr_state = indrpr_state.apply_gradients(grads=grads)
 
             return ensemble_loss, indrpr_state

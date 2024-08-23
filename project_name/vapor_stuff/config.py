@@ -4,7 +4,7 @@ from ml_collections import config_dict
 def get_config():
     config = config_dict.ConfigDict()
     config.SEED = 42
-    config.LR = 3e-4
+    config.LR = 1e-4
     config.GAMMA = 0.995
     config.EPS = 1
 
@@ -32,8 +32,10 @@ def get_config():
 
     config.BATCH_SIZE = 32
 
-    config.WANDB = "disabled"  # "online" if want it to work
-    # config.WANDB = "online"
+    # config.WANDB = "disabled"  # "online" if want it to work
+    config.WANDB = "online"
+
+    config.DEEPSEA_SIZE = 30
 
     config.WANDB_ENTITY = "jamesr-j"  # change this to your wandb username
 
