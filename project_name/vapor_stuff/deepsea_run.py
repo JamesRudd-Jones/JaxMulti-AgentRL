@@ -8,6 +8,7 @@ from project_name.vapor_stuff.algos import VAPOR_Lite, SAC, VAPOR_Lite_Less_Disc
 from typing import NamedTuple
 import chex
 from project_name.vapor_stuff.utils import TransitionNoInfo
+from project_name.vapor_stuff.envs.adjusted_gymnax_deep_sea import DeepSea
 
 
 class Transition(NamedTuple):
@@ -21,7 +22,9 @@ class Transition(NamedTuple):
 
 
 def run_train(config):
-    env, env_params = gymnax.make("DeepSea-bsuite", size=config.DEEPSEA_SIZE)  # TODO edited the gymnax env for deepsea for info
+    # env, env_params = gymnax.make("DeepSea-bsuite", size=config.DEEPSEA_SIZE)  # TODO edited the gymnax env for deepsea for info
+    env = DeepSea(size=config.DEEPSEA_SIZE)
+    env_params = env.default_params
 
     def train():
         key = jax.random.PRNGKey(config.SEED)
@@ -40,7 +43,7 @@ def run_train(config):
             actor_state, critic_state, ensrpr_state, buffer_state, env_state, obs, jnp.zeros((), dtype=bool), key)
 
         def _run_update(update_runner_state, unused):
-            runner_state, update_steps = update_runner_state
+            runner_state, update_steps, episodes_finished = update_runner_state
 
             def _run_episode_step(runner_state, unused):
                 # take initial env_state
@@ -122,6 +125,7 @@ def run_train(config):
                     "episodes_finished": jnp.sum(metric["returned_episode"]),
                     "episode_won_average": jnp.sum(~metric["bad_episode"][metric["returned_episode"]]) / metric["returned_episode"].sum(),
                     "env_step": metric["update_steps"] * config.NUM_ENVS * config.NUM_STEPS,
+                    "episode_finished": metric["episode_finished"],
                     "actor_loss": actor_loss,
                     "critic_loss": critic_loss,
                     "mean_ensembled_loss": mean_ensembled_loss
@@ -129,6 +133,8 @@ def run_train(config):
                 wandb.log(metric_dict)
 
             metric["update_steps"] = update_steps
+            episodes_finished += jnp.sum(metric["returned_episode"])
+            metric["episode_finished"] = episodes_finished
             jax.experimental.io_callback(callback, None,
                                          metric,
                                          actor_loss,
@@ -137,19 +143,10 @@ def run_train(config):
 
             update_steps = update_steps + 1
 
-            # update target freq every x update steps
-            def critic_fn(critic_state):
-                return critic_state
-
-            critic_state = jax.lax.cond(update_steps % config.TARGET_NETWORK_FREQ == 0,
-                                        actor.update_target_network,
-                                        critic_fn,
-                                        critic_state)
-
             return (
-            (actor_state, critic_state, ensrpr_state, buffer_state, env_state, obs, done, key), update_steps), metric
+            (actor_state, critic_state, ensrpr_state, buffer_state, env_state, obs, done, key), update_steps, episodes_finished), metric
 
-        runner_state, metric = jax.lax.scan(_run_update, (runner_state, 0), None, config["NUM_UPDATES"])
+        runner_state, metric = jax.lax.scan(_run_update, (runner_state, 0, 0), None, config["NUM_UPDATES"])
 
         return {"runner_state": runner_state, "metrics": metric}
 

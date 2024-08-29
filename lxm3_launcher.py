@@ -22,14 +22,14 @@ _LAUNCH_ON_CLUSTER = flags.DEFINE_boolean(
 _SINGULARITY_CONTAINER = flags.DEFINE_string(
     "container", None, "Path to singularity container"
 )
-_EXP_NAME = flags.DEFINE_string("exp_name", "BASELINES", "Name of experiment")
+_EXP_NAME = flags.DEFINE_string("exp_name", "DEEPSEA_ISH", "Name of experiment")
 _ENTRYPOINT = flags.DEFINE_string("entrypoint", None, "Entrypoint for experiment")
 
 _SWEEP = flags.DEFINE_string("sweep", "SWEEP", "Name of the sweep")
 # _SWEEP = flags.DEFINE_string("sweep", None, "Name of the sweep")
 
-# _SWEEP_INDEX = flags.DEFINE_string("sweep_index", None, "Index of configuration in the sweep")
-_SWEEP_INDEX = flags.DEFINE_string("sweep_index", "0", "Index of configuration in the sweep")
+_SWEEP_INDEX = flags.DEFINE_string("sweep_index", None, "Index of configuration in the sweep")
+# _SWEEP_INDEX = flags.DEFINE_string("sweep_index", "0", "Index of configuration in the sweep")
 
 _WANDB_GROUP = flags.DEFINE_string("wandb_group", "{xid}_{name}", "wandb group")
 _WANDB_PROJECT = flags.DEFINE_string("wandb_project", "ProbInfMarl",
@@ -83,8 +83,8 @@ def main(_):
                 job_requirements,
                 walltime=12 * xm.Hr,  # 48 is max
                 # extra_directives=["-l gpu_type=rtx4090"],
-                extra_directives=["-l gpu_type=rtx4090 -pe gpu 3"],  # TODO allows specifying multiple GPUS
-                # extra_directives=["-l gpu_type=gtx1080ti"],  # TODO for beaker  https://hpc.cs.ucl.ac.uk/gpus/
+                # extra_directives=["-l gpu_type=rtx4090 -pe gpu 3"],  # TODO allows specifying multiple GPUS
+                extra_directives=["-l gpu_type=gtx1080ti"],  # TODO for beaker  https://hpc.cs.ucl.ac.uk/gpus/
                 # extra_directives=["-ac allow=EF"],  # TODO for myriad  https://www.rc.ucl.ac.uk/docs/Clusters/Myriad/
                 # singularity_options=xm_cluster.SingularityOptions(bind={orbax_dir: orbax_dir}),
             )
@@ -143,48 +143,48 @@ def main(_):
         """
         SINGLE RUN BELOW
         """
-        xid = experiment.experiment_id
-        experiment_name = exp_name
-        experiment.add(
-            xm.Job(
-                executable=executable,
-                executor=executor,
-                # You can pass additional arguments to your executable with args
-                # This will be translated to `--seed 1`
-                # Note for booleans we currently use the absl.flags convention
-                # so {'gpu': False} will be translated to `--nogpu`
-                # args={"seed": 1},
-                # You can customize environment_variables as well.
-                # args=sweep[0],
-                env_vars={"WANDB_API_KEY": wandb_api_key,
-                "WANDB_PROJECT": _WANDB_PROJECT.value,
-                "WANDB_ENTITY": _WANDB_ENTITY.value,
-                "WANDB_NAME": f"{experiment_name}_{xid}_{0}",
-                "WANDB_MODE": _WANDB_MODE.value,
-                # "WANDB_RUN_GROUP": _WANDB_GROUP.value.format(name=experiment_name, xid=xid),
-                "WANDB_RUN_GROUP": experiment_name}
-            )
-        )
+        # xid = experiment.experiment_id
+        # experiment_name = exp_name
+        # experiment.add(
+        #     xm.Job(
+        #         executable=executable,
+        #         executor=executor,
+        #         # You can pass additional arguments to your executable with args
+        #         # This will be translated to `--seed 1`
+        #         # Note for booleans we currently use the absl.flags convention
+        #         # so {'gpu': False} will be translated to `--nogpu`
+        #         # args={"seed": 1},
+        #         # You can customize environment_variables as well.
+        #         # args=sweep[0],
+        #         env_vars={"WANDB_API_KEY": wandb_api_key,
+        #         "WANDB_PROJECT": _WANDB_PROJECT.value,
+        #         "WANDB_ENTITY": _WANDB_ENTITY.value,
+        #         "WANDB_NAME": f"{experiment_name}_{xid}_{0}",
+        #         "WANDB_MODE": _WANDB_MODE.value,
+        #         # "WANDB_RUN_GROUP": _WANDB_GROUP.value.format(name=experiment_name, xid=xid),
+        #         "WANDB_RUN_GROUP": experiment_name}
+        #     )
+        # )
 
         """ 
         BATCH RUN BELOW
         """
-        # xid = experiment.experiment_id
-        # experiment_name = exp_name
-        # envs = [
-        #     {
-        #         "WANDB_API_KEY": wandb_api_key,
-        #         "WANDB_PROJECT": _WANDB_PROJECT.value,
-        #         "WANDB_ENTITY": _WANDB_ENTITY.value,
-        #         "WANDB_NAME": f"{experiment_name}_{xid}_{wid+1}",
-        #         "WANDB_MODE": _WANDB_MODE.value,
-        #         # "WANDB_RUN_GROUP": _WANDB_GROUP.value.format(name=experiment_name, xid=xid),
-        #         "WANDB_RUN_GROUP": experiment_name,
-        #     } for wid in range(len(sweep))
-        # ]
-        # experiment.add(
-        #     xm_cluster.ArrayJob(executable, executor, args=sweep, env_vars=envs)
-        # )
+        xid = experiment.experiment_id
+        experiment_name = exp_name
+        envs = [
+            {
+                "WANDB_API_KEY": wandb_api_key,
+                "WANDB_PROJECT": _WANDB_PROJECT.value,
+                "WANDB_ENTITY": _WANDB_ENTITY.value,
+                "WANDB_NAME": f"{experiment_name}_{xid}_{wid+1}",
+                "WANDB_MODE": _WANDB_MODE.value,
+                # "WANDB_RUN_GROUP": _WANDB_GROUP.value.format(name=experiment_name, xid=xid),
+                "WANDB_RUN_GROUP": experiment_name,
+            } for wid in range(len(sweep))
+        ]
+        experiment.add(
+            xm_cluster.ArrayJob(executable, executor, args=sweep, env_vars=envs)
+        )
 
 
 if __name__ == "__main__":

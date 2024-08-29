@@ -4,6 +4,7 @@ import jax.random as jrandom
 import flax
 import chex
 import sys
+# import rlax
 
 from functools import partial
 from typing import Any, Tuple
@@ -85,6 +86,7 @@ class VAPOR_Lite:
                              reward=jnp.zeros((1)),
                              ensemble_reward=jnp.zeros((1)),
                              done=jnp.zeros((1), dtype=bool),
+                             logits=jnp.zeros((self.env.action_space(self.env_params).n), dtype=jnp.float32),
                              ))
 
         return actor_state, critic_state, ensembled_reward_state, buffer_state, key
@@ -103,7 +105,7 @@ class VAPOR_Lite:
         # z = z * 1e-8
         # log_prob = jnp.log(action_probs + z)  # TODO idk if this is right but eyo
 
-        return action, log_prob, action_probs, key
+        return action, log_prob, action_probs, logits, key
 
     @partial(jax.jit, static_argnums=(0,))
     def _get_reward_noise(self, ensrpr_state, obs: chex.Array, actions: chex.Array) -> chex.Array:
@@ -161,10 +163,13 @@ class VAPOR_Lite:
             obs = batch.experience.first.state
             action = batch.experience.first.action
             reward = batch.experience.first.reward
+
+            logits = batch.experience.first.logits
+
             done = batch.experience.first.done
             nobs = batch.experience.second.state
 
-            nactions, next_state_log_pi, next_state_action_probs, key = self.act(actor_params, nobs, key)
+            nactions, next_state_log_pi, next_state_action_probs, _, key = self.act(actor_params, nobs, key)
             nactions = jnp.expand_dims(nactions, axis=-1)
 
             qf_next_target = self.critic_network.apply(critic_target_params, nobs, nactions)
@@ -176,13 +181,23 @@ class VAPOR_Lite:
             min_qf_next_target = qf_next_target - (next_state_action_reward_noise * jnp.expand_dims(next_state_log_pi, axis=-1))
 
             # VAPOR-LITE
-            next_q_value = reward + state_action_reward_noise + (1 - done) * self.config.GAMMA * (min_qf_next_target)
+            # next_q_value = reward + state_action_reward_noise + (1 - done) * (min_qf_next_target)
 
             # use Q-values only for the taken actions
             qf_a_values = self.critic_network.apply(critic_params, obs, action)
             qf_a_values = jnp.min(qf_a_values, axis=-1)
 
-            td_error = qf_a_values - next_q_value  # TODO ensure this okay as other stuff vmaps over time?
+            # td_error = qf_a_values - next_q_value  # TODO ensure this okay as other stuff vmaps over time?
+
+            _, _, _, target_logits, key = self.act(actor_params, obs, key)
+
+            rho = rlax.categorical_importance_sampling_ratios(target_logits, logits, jnp.squeeze(action, axis=-1))
+
+            td_error = jax.vmap(rlax.vtrace)(qf_a_values,
+                                             min_qf_next_target,
+                                             reward + state_action_reward_noise,
+                                             done,
+                                             jnp.expand_dims(rho, axis=-1), 0.9)
 
             # mse loss below
             # qf_loss = jnp.mean(td_error ** 2)  # TODO check this is okay?
@@ -193,7 +208,7 @@ class VAPOR_Lite:
             importance_weights /= jnp.max(importance_weights)
 
             # reweight
-            qf_loss = 0.5 * jnp.mean(importance_weights * jnp.square(td_error))
+            qf_loss = 0.5 * jnp.mean(importance_weights * jnp.square(jnp.squeeze(td_error, axis=-1)))
             new_priorities = jnp.abs(td_error) + 1e-7
 
             return qf_loss, new_priorities[:, 0]  # to remove the last dimensions of new_priorities
@@ -214,7 +229,7 @@ class VAPOR_Lite:
         def actor_loss(actor_params, critic_params, batch, key):
             obs = batch.experience.first.state
 
-            actions, log_pi, _, key = self.act(actor_params, obs, key)
+            actions, log_pi, _, _, key = self.act(actor_params, obs, key)
             actions = jnp.expand_dims(actions, axis=-1)
 
             min_qf_values = self.critic_network.apply(critic_params, obs, actions)  # TODO ensure it uses the right params

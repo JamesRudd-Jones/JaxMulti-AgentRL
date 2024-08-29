@@ -4,7 +4,7 @@ import jax.random as jrandom
 import flax
 import chex
 import sys
-import rlax
+# import rlax
 
 from functools import partial
 from typing import Any, Tuple
@@ -15,6 +15,7 @@ from flax.training.train_state import TrainState
 import optax
 import flashbax as fbx
 from project_name.vapor_stuff.utils import TransitionNoInfo
+from project_name.vapor_stuff import utils
 
 
 class TrainStateCritic(TrainState):  # TODO check gradients do not update target_params
@@ -43,7 +44,7 @@ class VAPOR_Lite:
 
         self.per_buffer = fbx.make_prioritised_flat_buffer(max_length=config.BUFFER_SIZE,
                                                            min_length=config.BATCH_SIZE,
-                                                           sample_batch_size=config.BATCH_SIZE,
+                                                           sample_batch_size=config.BATCH_SIZE + 1,
                                                            add_sequences=True,
                                                            add_batch_size=None,
                                                            priority_exponent=config.REPLAY_PRIORITY_EXP,
@@ -53,14 +54,13 @@ class VAPOR_Lite:
         type(flax.training.train_state), TrainStateCritic, TrainStateRP, Any, chex.PRNGKey]:  # TODO imrpove checks any
         actor_state = TrainState.create(apply_fn=self.actor_network.apply,
                                         params=self.actor_params,
-                                        tx=optax.chain(optax.inject_hyperparams(optax.adam)(self.config.LR, eps=1e-4)),
+                                        tx=optax.adam(self.config.LR),
                                         )
         critic_state = TrainStateCritic.create(apply_fn=self.critic_network.apply,  # TODO check this actually works
                                                params=self.critic_params,
                                                target_params=self.critic_params,
                                                # TODO does this need copying? worth checking to ensure params and target arent the same
-                                               tx=optax.chain(
-                                                   optax.inject_hyperparams(optax.adam)(self.config.LR, eps=1e-4)),
+                                               tx=optax.adam(self.config.LR),
                                                )
 
         def create_reward_state(key: chex.PRNGKey) -> TrainStateRP:  # TODO is this the best place to put it all?
@@ -171,7 +171,7 @@ class VAPOR_Lite:
             logits = batch.experience.first.logits
 
             # done = batch.experience.first.done
-            done = self.config.GAMMA * batch.experience.first.done
+            done = self.config.GAMMA * batch.experience.first.done  # TODO changed this to next done
             nobs = batch.experience.second.state
 
             _, target_log_pi, target_action_probs, _, key = self.act(actor_params, nobs, key)
@@ -189,27 +189,30 @@ class VAPOR_Lite:
             min_qf_next_target = min_qf_next_target.sum(axis=-1)[:, jnp.newaxis]  # TODO what axis is this again?
 
             # # VAPOR-LITE
-            # next_q_value = reward + state_action_reward_noise + (1 - done) * self.config.GAMMA * (min_qf_next_target)
+            next_q_value = reward + state_action_reward_noise + (1 - done) * (min_qf_next_target)
             #
             # # use Q-values only for the taken actions
             qf_values = self.critic_network.apply(critic_params, obs)
             qf_values = jnp.min(qf_values, axis=-1)
             qf_a_values = jnp.take_along_axis(qf_values, action, axis=1)
             #
-            # td_error = qf_a_values - next_q_value  # TODO ensure this okay as other stuff vmaps over time?
+            td_error = qf_a_values - next_q_value  # TODO ensure this okay as other stuff vmaps over time?
 
-            _, _, _, target_logits, key = self.act(actor_params, obs, key)
-
-            rho = rlax.categorical_importance_sampling_ratios(target_logits, logits, jnp.squeeze(action, axis=-1))
-
-            td_error = jax.vmap(rlax.vtrace)(qf_a_values,
-                                            min_qf_next_target,
-                                            reward + state_action_reward_noise,
-                                            done,
-                                            jnp.expand_dims(rho, axis=-1))
+            # _, _, _, target_logits, key = self.act(actor_params, obs, key)
+            #
+            # rho = rlax.categorical_importance_sampling_ratios(target_logits, logits, jnp.squeeze(action, axis=-1))
+            #
+            # vmapped_lambda = jnp.repeat(jnp.array(0.9), qf_a_values.shape[0])
+            #
+            # td_error = jax.vmap(rlax.vtrace)(qf_a_values,
+            #                                 min_qf_next_target,
+            #                                 reward + state_action_reward_noise,
+            #                                 done,
+            #                                 jnp.expand_dims(rho, axis=-1),
+            #                                 vmapped_lambda)
 
             # mse loss below
-            # qf_loss = jnp.mean(td_error ** 2)  # TODO check this is okay?
+            qf_loss = utils.l2_loss(td_error)
 
             # Get the importance weights.
             importance_weights = (1. / batch.priorities).astype(jnp.float32)
@@ -217,11 +220,11 @@ class VAPOR_Lite:
             importance_weights /= jnp.max(importance_weights)
 
             # reweight
-            qf_loss = 0.5 * jnp.mean(importance_weights * jnp.square(jnp.squeeze(td_error, axis=-1)))
+            qf_loss = jnp.mean(importance_weights * qf_loss)
             # qf_loss = jnp.mean(importance_weights * qf_loss)
-            new_priorities = jnp.abs(td_error) + 1e-7
+            new_priorities = jnp.abs(jnp.squeeze(td_error, axis=-1)) + 1e-7
 
-            return qf_loss, new_priorities[:, 0]  # to remove the last dimensions of new_priorities
+            return qf_loss, new_priorities  # to remove the last dimensions of new_priorities
 
         (critic_loss, new_priorities), grads = jax.value_and_grad(critic_loss, argnums=1, has_aux=True)(
             actor_state.params,
@@ -280,5 +283,10 @@ class VAPOR_Lite:
                                                                      ensemble_state,
                                                                      ensemble_action,
                                                                      ensemble_reward)
+
+        critic_state = jax.lax.cond(critic_state.step % self.config.TARGET_UPDATE_INTERVAL == 0,
+            lambda spec_train_state: self.update_target_network(critic_state),
+            lambda spec_train_state: spec_train_state, operand=critic_state
+                                    )
 
         return actor_state, critic_state, ensrpr_state, buffer_state, actor_loss, critic_loss, jnp.mean(ensembled_loss), key
