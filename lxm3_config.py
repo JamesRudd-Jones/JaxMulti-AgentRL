@@ -12,6 +12,7 @@ def get_config():
 def sweep_SWEEP():
     seed_list = [28, 10, 98, 44, 22, 68]
     depth = [25, 30, 35, 40, 45, 50]
+    depth = [15]
 
     combinations = itertools.product(seed_list, depth)
     result = [{"seed": seed,

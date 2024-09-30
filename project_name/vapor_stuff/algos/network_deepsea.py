@@ -10,12 +10,12 @@ class SoftQNetwork(nn.Module):
 
     @nn.compact
     def __call__(self, x):
-        x = nn.Conv(32, kernel_size=(2, 2), strides=(1, 1), padding="VALID",
-                    kernel_init=kaiming_normal(), bias_init=constant(0.0))(x)
-        x = nn.relu(x)
-
-        x = nn.Conv(64, kernel_size=(2, 2), strides=(1, 1), padding="VALID",
-                    kernel_init=kaiming_normal(), bias_init=constant(0.0))(x)
+        # x = nn.Conv(32, kernel_size=(2, 2), strides=(1, 1), padding="VALID",
+        #             kernel_init=kaiming_normal(), bias_init=constant(0.0))(x)
+        # x = nn.relu(x)
+        #
+        # x = nn.Conv(64, kernel_size=(2, 2), strides=(1, 1), padding="VALID",
+        #             kernel_init=kaiming_normal(), bias_init=constant(0.0))(x)
 
         x = x.reshape((x.shape[0], -1))
         x = nn.Dense(256, kernel_init=kaiming_normal(), bias_init=constant(0.0))(x)
@@ -24,7 +24,8 @@ class SoftQNetwork(nn.Module):
         x = nn.Dense(128, kernel_init=kaiming_normal(), bias_init=constant(0.0))(x)
         x = nn.relu(x)
 
-        q_vals = nn.Dense(self.action_dim, kernel_init=kaiming_normal(), bias_init=constant(0.0))(x)
+        # q_vals = nn.Dense(self.action_dim, kernel_init=kaiming_normal(), bias_init=constant(0.0))(x)
+        q_vals = nn.Dense(1, kernel_init=kaiming_normal(), bias_init=constant(0.0))(x)
 
         return q_vals
 
@@ -49,12 +50,12 @@ class Actor(nn.Module):
 
     @nn.compact
     def __call__(self, x):
-        x = nn.Conv(32, kernel_size=(2, 2), strides=(1, 1), padding="VALID",
-                    kernel_init=kaiming_normal(), bias_init=constant(0.0))(x)
-        x = nn.relu(x)
-
-        x = nn.Conv(64, kernel_size=(2, 2), strides=(1, 1), padding="VALID",
-                    kernel_init=kaiming_normal(), bias_init=constant(0.0))(x)
+        # x = nn.Conv(32, kernel_size=(2, 2), strides=(1, 1), padding="VALID",
+        #             kernel_init=kaiming_normal(), bias_init=constant(0.0))(x)
+        # x = nn.relu(x)
+        #
+        # x = nn.Conv(64, kernel_size=(2, 2), strides=(1, 1), padding="VALID",
+        #             kernel_init=kaiming_normal(), bias_init=constant(0.0))(x)
 
         x = x.reshape((x.shape[0], -1))
         x = nn.Dense(256, kernel_init=kaiming_normal(), bias_init=constant(0.0))(x)
@@ -80,12 +81,12 @@ class PriorAndNotNN(nn.Module):
         # takes in s and a
         obs, actions = data
 
-        obs = nn.Conv(32, kernel_size=(2, 2), strides=(1, 1), padding="VALID",
-                    kernel_init=kaiming_normal(), bias_init=constant(0.0))(obs)
-        obs = nn.relu(obs)
-
-        obs = nn.Conv(64, kernel_size=(2, 2), strides=(1, 1), padding="VALID",
-                    kernel_init=kaiming_normal(), bias_init=constant(0.0))(obs)
+        # obs = nn.Conv(32, kernel_size=(2, 2), strides=(1, 1), padding="VALID",
+        #             kernel_init=kaiming_normal(), bias_init=constant(0.0))(obs)
+        # obs = nn.relu(obs)
+        #
+        # obs = nn.Conv(64, kernel_size=(2, 2), strides=(1, 1), padding="VALID",
+        #             kernel_init=kaiming_normal(), bias_init=constant(0.0))(obs)
 
         obs = obs.reshape((obs.shape[0], -1))
         obs = nn.Dense(256, kernel_init=kaiming_normal(), bias_init=constant(0.0))(obs)

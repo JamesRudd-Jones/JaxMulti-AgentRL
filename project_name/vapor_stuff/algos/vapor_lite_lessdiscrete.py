@@ -15,7 +15,7 @@ from flax.training.train_state import TrainState
 import optax
 import flashbax as fbx
 from project_name.vapor_stuff.utils import TransitionNoInfo
-
+from project_name.vapor_stuff import utils
 
 class TrainStateCritic(TrainState):  # TODO check gradients do not update target_params
     target_params: flax.core.FrozenDict
@@ -44,7 +44,7 @@ class VAPOR_Lite:
 
         self.per_buffer = fbx.make_prioritised_flat_buffer(max_length=config.BUFFER_SIZE,
                                                            min_length=config.BATCH_SIZE,
-                                                           sample_batch_size=config.BATCH_SIZE,
+                                                           sample_batch_size=config.BATCH_SIZE + 1,
                                                            add_sequences=True,
                                                            add_batch_size=None,
                                                            priority_exponent=config.REPLAY_PRIORITY_EXP,
@@ -163,44 +163,69 @@ class VAPOR_Lite:
             obs = batch.experience.first.state
             action = batch.experience.first.action
             reward = batch.experience.first.reward
-
             logits = batch.experience.first.logits
+            done = self.config.GAMMA * (1 - batch.experience.first.done)
+            # nobs = batch.experience.second.state
 
-            done = batch.experience.first.done
-            nobs = batch.experience.second.state
+            _, log_pi, action_probs, logits_actor, key = self.act(actor_params, obs, key)
+            qf_values = self.critic_network.apply(critic_params, obs, action)
+            qf_values = jnp.min(qf_values, axis=-1)
+            v_t = qf_values[1:]
+            v_tm1 = qf_values[:-1]
 
-            nactions, next_state_log_pi, next_state_action_probs, _, key = self.act(actor_params, nobs, key)
-            nactions = jnp.expand_dims(nactions, axis=-1)
+            discounts = done[1:]
 
-            qf_next_target = self.critic_network.apply(critic_target_params, nobs, nactions)
-            qf_next_target = jnp.min(qf_next_target, axis=-1)
-
-            # next_state_reward_noise = self._reward_noise_over_actions(ensrpr_state, nobs)
-            next_state_action_reward_noise = self._get_reward_noise(ensrpr_state, nobs, nactions)
             state_action_reward_noise = self._get_reward_noise(ensrpr_state, obs, action)
-            min_qf_next_target = qf_next_target - (next_state_action_reward_noise * jnp.expand_dims(next_state_log_pi, axis=-1))
+            rewards = reward[1:] + state_action_reward_noise[1:]
 
-            # VAPOR-LITE
-            # next_q_value = reward + state_action_reward_noise + (1 - done) * (min_qf_next_target)
+            rhos = utils.categorical_importance_sampling_ratios(logits_actor[:-1], logits[:-1],
+                                                                jnp.squeeze(action[:-1], axis=-1))
 
-            # use Q-values only for the taken actions
-            qf_a_values = self.critic_network.apply(critic_params, obs, action)
-            qf_a_values = jnp.min(qf_a_values, axis=-1)
+            vtrace_td_error_and_advantage = jax.vmap(utils.vtrace_td_error_and_advantage, in_axes=1, out_axes=1)
 
-            # td_error = qf_a_values - next_q_value  # TODO ensure this okay as other stuff vmaps over time?
+            vmapped_lambda = jnp.expand_dims(jnp.repeat(jnp.array(0.9), v_t.shape[0]), axis=-1)
+            vtrace_returns = vtrace_td_error_and_advantage(v_tm1, v_t, rewards, discounts,
+                                                           jnp.expand_dims(rhos, axis=-1),
+                                                           vmapped_lambda)  # TODO should have a batch dim
+            # TODO think as using dones it is 1-discounts rather than just discounts, done this much higher
 
-            _, _, _, target_logits, key = self.act(actor_params, obs, key)
+            pg_advs = vtrace_returns.pg_advantage
 
-            rho = rlax.categorical_importance_sampling_ratios(target_logits, logits, jnp.squeeze(action, axis=-1))
+            td_error = vtrace_returns.errors
+            qf_loss = 0.5 * jnp.sum(jnp.square(td_error))
 
-            td_error = jax.vmap(rlax.vtrace)(qf_a_values,
-                                             min_qf_next_target,
-                                             reward + state_action_reward_noise,
-                                             done,
-                                             jnp.expand_dims(rho, axis=-1), 0.9)
-
-            # mse loss below
-            # qf_loss = jnp.mean(td_error ** 2)  # TODO check this is okay?
+            # nactions, next_state_log_pi, next_state_action_probs, _, key = self.act(actor_params, nobs, key)
+            # nactions = jnp.expand_dims(nactions, axis=-1)
+            #
+            # qf_next_target = self.critic_network.apply(critic_target_params, nobs, nactions)
+            # qf_next_target = jnp.min(qf_next_target, axis=-1)
+            #
+            # # next_state_reward_noise = self._reward_noise_over_actions(ensrpr_state, nobs)
+            # next_state_action_reward_noise = self._get_reward_noise(ensrpr_state, nobs, nactions)
+            # state_action_reward_noise = self._get_reward_noise(ensrpr_state, obs, action)
+            # min_qf_next_target = qf_next_target - (next_state_action_reward_noise * jnp.expand_dims(next_state_log_pi, axis=-1))
+            #
+            # # VAPOR-LITE
+            # # next_q_value = reward + state_action_reward_noise + (1 - done) * (min_qf_next_target)
+            #
+            # # use Q-values only for the taken actions
+            # qf_a_values = self.critic_network.apply(critic_params, obs, action)
+            # qf_a_values = jnp.min(qf_a_values, axis=-1)
+            #
+            # # td_error = qf_a_values - next_q_value  # TODO ensure this okay as other stuff vmaps over time?
+            #
+            # _, _, _, target_logits, key = self.act(actor_params, obs, key)
+            #
+            # rho = rlax.categorical_importance_sampling_ratios(target_logits, logits, jnp.squeeze(action, axis=-1))
+            #
+            # td_error = jax.vmap(rlax.vtrace)(qf_a_values,
+            #                                  min_qf_next_target,
+            #                                  reward + state_action_reward_noise,
+            #                                  done,
+            #                                  jnp.expand_dims(rho, axis=-1), 0.9)
+            #
+            # # mse loss below
+            # # qf_loss = jnp.mean(jnp.square(td_error))  # TODO check this is okay?
 
             # Get the importance weights.
             importance_weights = (1. / batch.priorities).astype(jnp.float32)
@@ -208,8 +233,12 @@ class VAPOR_Lite:
             importance_weights /= jnp.max(importance_weights)
 
             # reweight
-            qf_loss = 0.5 * jnp.mean(importance_weights * jnp.square(jnp.squeeze(td_error, axis=-1)))
+            qf_loss = 0.5 * jnp.mean(importance_weights[1:] * jnp.square(jnp.squeeze(td_error, axis=-1)))
+            # TODO should it be 1: or :-1
             new_priorities = jnp.abs(td_error) + 1e-7
+
+            new_priorities = jnp.concatenate((new_priorities, jnp.array([new_priorities[0]])))
+            # TODO the above is super dodge loL
 
             return qf_loss, new_priorities[:, 0]  # to remove the last dimensions of new_priorities
 

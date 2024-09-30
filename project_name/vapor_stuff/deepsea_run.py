@@ -107,14 +107,14 @@ def run_train(config):
             #                                                                           fake_update_fn,
             #                                                                           runner_state)
 
-            actor_state, critic_state, ensrpr_state, buffer_state, actor_loss, critic_loss, mean_ensembled_loss, key = actor.update(
+            actor_state, critic_state, ensrpr_state, buffer_state, actor_loss, critic_loss, mean_ensembled_loss, pg_loss, ent_loss, key = actor.update(
                 runner_state)
 
             # metric handling
             # metric = jax.tree_map(lambda x: jnp.swapaxes(x, 1, 2), trajectory_batch.info)
             metric = trajectory_batch.info
 
-            def callback(metric, actor_loss, critic_loss, mean_ensembled_loss):
+            def callback(metric, actor_loss, critic_loss, mean_ensembled_loss, pg_loss, ent_loss):
                 # print(metric["update_steps"])
                 # print(train_state.params)#["Dense_2"])
                 # if metric["update_steps"] == 2:
@@ -128,6 +128,8 @@ def run_train(config):
                     "episode_finished": metric["episode_finished"],
                     "actor_loss": actor_loss,
                     "critic_loss": critic_loss,
+                    "pg_loss": pg_loss,
+                    "ent_loss": ent_loss,
                     "mean_ensembled_loss": mean_ensembled_loss
                 }
                 wandb.log(metric_dict)
@@ -139,7 +141,9 @@ def run_train(config):
                                          metric,
                                          actor_loss,
                                          critic_loss,
-                                         mean_ensembled_loss)
+                                         mean_ensembled_loss,
+                                         pg_loss,
+                                         ent_loss)
 
             update_steps = update_steps + 1
 

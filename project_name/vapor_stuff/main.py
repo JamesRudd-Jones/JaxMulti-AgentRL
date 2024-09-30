@@ -8,7 +8,7 @@ import sys
 
 
 _SEED = flags.DEFINE_integer("seed", 44, "Random seed")
-_DEEPSEA_DEPTH = flags.DEFINE_integer("deepsea_depth", 10, "Depth of deepsea environment")
+_DEEPSEA_DEPTH = flags.DEFINE_integer("deepsea_depth", 12, "Depth of deepsea environment")
 _DISABLE_JIT = flags.DEFINE_boolean("disable_jit", False, "To disable jit")
 
 
@@ -26,10 +26,10 @@ def main(_):
     config.DEVICE = xla_bridge.get_backend().platform
 
     wandb.init(  # project="ProbInfMarl",
-    #            entity=config.WANDB_ENTITY,
+               #  entity=config.WANDB_ENTITY,
                config=config,
                # group="DEEPSEA_ISH",
-               mode=config.WANDB
+               # mode=config.WANDB
                )
 
     with jax.disable_jit(disable=config.DISABLE_JIT):
