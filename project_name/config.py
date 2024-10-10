@@ -6,8 +6,8 @@ def get_config():
     config = config_dict.ConfigDict()
     config.SEED = 42
 
-    config.CNN = False
-    # config.CNN = True
+    # config.CNN = False
+    config.CNN = True
 
     # config.TOTAL_TIMESTEPS = 10000000
     config.NUM_UPDATES = 100  # 40000  # 10000
@@ -24,7 +24,7 @@ def get_config():
 
     config.WANDB_ENTITY = "jamesr-j"  # change this to your wandb username
 
-    config.AGENT_TYPE =  ["PPO", "PPO"]  # ["ROMMEO", "ROMMEO"]  # ["PPO", "PPO"]
-    config.NUM_AGENTS = 2  # TODO is this really the best way?
+    config.AGENT_TYPE = ["PPO"]#, "PPO"]  # ["ROMMEO", "ROMMEO"]  # ["PPO", "PPO"]
+    config.NUM_AGENTS = 1  # TODO is this really the best way?
 
     return config

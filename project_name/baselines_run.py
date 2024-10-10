@@ -4,16 +4,14 @@ import jax.random as jrandom
 from project_name.config import get_config  # TODO dodge need to know how to fix this
 import wandb
 import gymnax
-# from project_name.vapor_stuff.algos import VAPOR_Lite
 from typing import NamedTuple
 import chex
-# from project_name.vapor_stuff.utils import TransitionNoInfo
 from .pax.envs.in_the_matrix import InTheMatrix, EnvParams as MatrixEnvParams
 from .pax.envs.iterated_matrix_game import IteratedMatrixGame, EnvParams
-# from .pax.agents.ppo.ppo import make_agent
 from .agents import Agent, MultiAgent
 from .utils import Transition, EvalTransition, Utils, UtilsCNN
 import sys
+from .gymnax_jaxmarl_wrapper import GymnaxToJaxMARL
 
 
 def run_train(config):
@@ -22,6 +20,10 @@ def run_train(config):
         env = InTheMatrix(num_inner_steps=config.NUM_INNER_STEPS, num_outer_steps=config.NUM_META_STEPS,
                           fixed_coin_location=False)
         env_params = MatrixEnvParams(payoff_matrix=payoff, freeze_penalty=5)
+
+        env = GymnaxToJaxMARL("DeepSea-bsuite", {"size": 12})  # TODO turn this on randomize_actions=True
+        env_params = env.default_params
+
         utils = UtilsCNN(config)  # TODO this a bit dodge
     else:
         payoff = [[3, 3], [1, 4], [4, 1], [2, 2]]  # [[-1, -1], [-3, 0], [0, -3], [-2, -2]]  # payoff matrix for the IPD
@@ -33,9 +35,7 @@ def run_train(config):
         key = jax.random.PRNGKey(config.SEED)
 
         if config.NUM_AGENTS == 1:
-            print("NOT RIGHT HERE")
-            pass
-            # actor = Agent(env=env, config=config, key=key)  # TODO fix this m8y
+            actor = Agent(env=env, env_params=env_params, config=config, utils=utils, key=key)
         else:
             actor = MultiAgent(env=env, env_params=env_params, config=config, utils=utils, key=key)
         train_state, mem_state = actor.initialise()
@@ -128,6 +128,7 @@ def run_train(config):
             env_stats = jax.tree_util.tree_map(lambda x: x.mean(), utils.visitation(env_state,
                                                                                     trajectory_batch,
                                                                                     obs))
+            # TODO remove these stats if not using them and replace with deepsea stats somehow
 
             if "MFOS" not in config.AGENT_TYPE:
                 jax.experimental.io_callback(callback, None, trajectory_batch, env_stats)

@@ -22,11 +22,17 @@ class PPOAgent(AgentBase):
         self.env = env
         self.env_params = env_params
         self.network = ActorCritic(env.action_space().n, config=config)
-        init_x = (jnp.zeros((1, config.NUM_ENVS, env.observation_space(env_params).n)),
-                  jnp.zeros((1, config.NUM_ENVS)),
-                  )
-        key, _key = jrandom.split(key)
 
+        if self.config.CNN:
+            init_x = ((jnp.zeros((1, config.NUM_ENVS, *env.observation_space(env_params).shape))),
+                      jnp.zeros((1, config.NUM_ENVS)),
+                      )
+        else:
+            init_x = (jnp.zeros((1, config.NUM_ENVS, env.observation_space(env_params).n)),
+                      jnp.zeros((1, config.NUM_ENVS)),
+                      )
+
+        key, _key = jrandom.split(key)
         self.network_params = self.network.init(_key, init_x)
 
         def linear_schedule(count):  # TODO put this somewhere better

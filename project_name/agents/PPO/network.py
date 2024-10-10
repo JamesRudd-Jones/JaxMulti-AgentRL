@@ -8,11 +8,19 @@ import numpy as np
 from flax.linen.initializers import constant, orthogonal
 from typing import Sequence, NamedTuple, Any, Dict
 import distrax
+from ml_collections import ConfigDict
+
+
+class CNNtoLinear(nn.Module):
+    @nn.compact
+    def __call__(self, obs):
+        flatten_layer = jnp.reshape(obs, (obs.shape[0], obs.shape[1], -1))
+        return flatten_layer
 
 
 class ActorCritic(nn.Module):  # TODO change this and remove RNN
     action_dim: Sequence[int]
-    config: Dict
+    config: ConfigDict
     activation: str = "tanh"
 
     @nn.compact
@@ -23,7 +31,14 @@ class ActorCritic(nn.Module):  # TODO change this and remove RNN
             activation = nn.tanh
 
         obs, dones = x
-        embedding = nn.Dense(128, kernel_init=orthogonal(np.sqrt(2)), bias_init=constant(0.0))(obs)
+
+        if self.config.CNN:
+            embedding = CNNtoLinear()(obs)
+        else:
+            embedding = nn.Dense(128, kernel_init=orthogonal(np.sqrt(2)), bias_init=constant(0.0))(obs)
+            embedding = nn.relu(embedding)
+
+        embedding = nn.Dense(128, kernel_init=orthogonal(np.sqrt(2)), bias_init=constant(0.0))(embedding)
         embedding = activation(embedding)
         embedding = nn.Dense(128, kernel_init=orthogonal(np.sqrt(2)), bias_init=constant(0.0))(embedding)
         embedding = activation(embedding)
@@ -31,7 +46,7 @@ class ActorCritic(nn.Module):  # TODO change this and remove RNN
 
         pi = distrax.Categorical(logits=actor_mean)
 
-        critic = nn.Dense(128, kernel_init=orthogonal(np.sqrt(2)), bias_init=constant(0.0))(obs)
+        critic = nn.Dense(128, kernel_init=orthogonal(np.sqrt(2)), bias_init=constant(0.0))(embedding)
         critic = activation(critic)
         critic = nn.Dense(128, kernel_init=orthogonal(np.sqrt(2)), bias_init=constant(0.0))(critic)
         critic = activation(critic)

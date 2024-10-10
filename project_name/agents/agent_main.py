@@ -17,27 +17,57 @@ class Agent:
         self.utils = utils
         self.agent_types = {idx: agent for idx, agent in enumerate(config.AGENT_TYPE)}
         self.agent = import_class_from_folder(self.agent_types[0])(env=env, env_params=env_params, key=key, config=config)
+        self.train_state, self.mem_state = self.agent.create_train_state()
 
     @partial(jax.jit, static_argnums=(0,))
     def initialise(self):
-        train_state, hstate = self.agent.create_train_state()  # TODO add thing to return empty hstate if hstate is none I guess
-        return train_state, hstate[jnp.newaxis, :]
+        return self.train_state, self.mem_state
 
     @partial(jax.jit, static_argnums=(0,))
-    def act(self, train_state: Any, hstate: chex.Array, obs_batch: Dict[str, chex.Array], last_done: chex.Array, key: chex.PRNGKey) -> Tuple[chex.Array, chex.Array, chex.Array, chex.Array, chex.PRNGKey]:  # TODO add better chex fo trainstate
+    def act(self, train_state: Any, mem_state: chex.Array, obs_batch: Dict[str, chex.Array], last_done: chex.Array, key: chex.PRNGKey) -> Tuple[chex.Array, chex.Array, chex.Array, chex.Array, chex.PRNGKey]:  # TODO add better chex fo trainstate
         ac_in = (obs_batch,
                  last_done,
                  )
-        hstate, action, log_prob, value, key, pi, spec_key = self.agent.act(train_state, hstate[0], ac_in, key)
-        return hstate[jnp.newaxis, :], action, log_prob, value, key, pi, spec_key[jnp.newaxis, :]
+        mem_state, action, log_prob, value, key = self.agent.act(train_state, mem_state, ac_in, key)
+        return mem_state, action, log_prob, value, key
 
     @partial(jax.jit, static_argnums=(0,))
-    def update(self, update_state: chex.Array, trajectory_batch: chex.Array) -> Tuple[Any, Any, Dict[str, chex.Array], chex.Array, chex.Array]:  # TODO add better chex
-        train_state, env_state, last_obs, done_batch, hstate, key = update_state
-        last_obs_batch = batchify(last_obs, self.env.agents, self.env.num_agents, self.config["NUM_ENVS"])
-        update_state = train_state, env_state, last_obs_batch[0], done_batch.squeeze(axis=0), hstate[0], key
-        trajectory_batch = jax.tree_map(lambda x: x[:, 0], trajectory_batch)
-        train_state, env_state, obs, last_done, hstate, key = self.agent.update(update_state, trajectory_batch)
-        return train_state, env_state, last_obs, last_done[jnp.newaxis, :], hstate[jnp.newaxis], key
+    def update_encoding(self, train_state: Any, mem_state: Any, obs_batch: Any, action: Any, reward: Any, done: Any, key):
+        agent = 0
+        return self.agent.update_encoding(train_state, mem_state, agent, obs_batch, action, reward, done, key)
 
-    # TODO add a thing so hstate is fine if don't have one etc
+    @partial(jax.jit, static_argnums=(0,))
+    def meta_act(self, mem_state: Any):
+        return self.agent.meta_policy(mem_state)
+
+    @partial(jax.jit, static_argnums=(0,))
+    def reset_memory(self, mem_state: Any):
+        return self.agent.reset_memory(mem_state)
+
+    @partial(jax.jit, static_argnums=(0,))
+    def update(self, train_state: Any, mem_state: Any, env_state: Any, last_obs_batch: Any, last_done: Any, key: Any,
+               trajectory_batch: Any):  # TODO add better chex
+        new_mem_state = jax.tree_map(lambda x: jnp.expand_dims(x, axis=1), trajectory_batch.mem_state)
+        trajectory_batch = trajectory_batch._replace(mem_state=new_mem_state)  # TODO check this is fine
+        ac_in = (last_obs_batch, last_done)
+        train_state = (train_state, mem_state, env_state, ac_in, key)
+        runner_list = self.agent.update(train_state, 0, trajectory_batch)
+        train_state = runner_list[0]
+        mem_state = runner_list[1]
+        key = runner_list[-1]
+
+        return train_state, mem_state, env_state, last_obs_batch, last_done[jnp.newaxis, :], key
+
+    @partial(jax.jit, static_argnums=(0,))
+    def meta_update(self, train_state: Any, mem_state: Any, env_state: Any, last_obs_batch: Any, last_done: Any, key: Any,
+               trajectory_batch: Any):  # TODO add better chex
+        new_mem_state = jax.tree_map(lambda x: jnp.expand_dims(x, axis=1), trajectory_batch.mem_state)
+        trajectory_batch = trajectory_batch._replace(mem_state=new_mem_state)  # TODO check this is fine
+        ac_in = (last_obs_batch, last_done)
+        train_state = (train_state, mem_state, env_state, ac_in, key)
+        runner_list = self.agent.meta_update(train_state, 0, trajectory_batch)
+        train_state = runner_list[0]
+        mem_state = runner_list[1]
+        key = runner_list[-1]
+
+        return train_state, mem_state, env_state, last_obs_batch, last_done[jnp.newaxis, :], key

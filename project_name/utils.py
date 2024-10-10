@@ -228,15 +228,20 @@ class UtilsCNN(Utils):
         super().__init__(config)
     @staticmethod
     def batchify_obs(x: dict, agent_list, num_agents, num_envs):
-        obs = jnp.stack([x[a]["observation"] for a in agent_list]).reshape(
-            (num_agents, num_envs, *x[0]["observation"].shape[1:]))
-        inv = jnp.stack([x[a]["inventory"] for a in agent_list]).reshape((num_agents, num_envs, -1))
-        return (obs, inv)
+        # obs = jnp.stack([x[a]["observation"] for a in agent_list]).reshape(
+        #     (num_agents, num_envs, *x[0]["observation"].shape[1:]))
+        # inv = jnp.stack([x[a]["inventory"] for a in agent_list]).reshape((num_agents, num_envs, -1))
+        # return (obs, inv)
+        inter = jnp.stack([x[a] for a in agent_list])
+        return inter.reshape((num_agents, num_envs, *inter.shape[2:]))
 
     @staticmethod
     def ac_in(obs, dones, agent):
-        return ((obs[0][jnp.newaxis, agent, :],
-                 obs[1][jnp.newaxis, agent, :]),
+        # return ((obs[0][jnp.newaxis, agent, :],
+        #          obs[1][jnp.newaxis, agent, :]),
+        #         dones[jnp.newaxis, agent],
+        #         )
+        return (obs[jnp.newaxis, agent, :],
                 dones[jnp.newaxis, agent],
                 )
 
