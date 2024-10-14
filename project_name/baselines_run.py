@@ -16,12 +16,12 @@ from .gymnax_jaxmarl_wrapper import GymnaxToJaxMARL
 
 def run_train(config):
     if config.CNN:
-        payoff = jnp.array([[[3, 0], [5, 1]], [[3, 5], [0, 1]]])  # TODO sort this out
-        env = InTheMatrix(num_inner_steps=config.NUM_INNER_STEPS, num_outer_steps=config.NUM_META_STEPS,
-                          fixed_coin_location=False)
-        env_params = MatrixEnvParams(payoff_matrix=payoff, freeze_penalty=5)
+        # payoff = jnp.array([[[3, 0], [5, 1]], [[3, 5], [0, 1]]])  # TODO sort this out
+        # env = InTheMatrix(num_inner_steps=config.NUM_INNER_STEPS, num_outer_steps=config.NUM_META_STEPS,
+        #                   fixed_coin_location=False)
+        # env_params = MatrixEnvParams(payoff_matrix=payoff, freeze_penalty=5)
 
-        env = GymnaxToJaxMARL("DeepSea-bsuite", {"size": 12})  # TODO turn this on randomize_actions=True
+        env = GymnaxToJaxMARL("DeepSea-bsuite", {"size": config.NUM_INNER_STEPS})  # TODO turn this on randomize_actions=True
         env_params = env.default_params
 
         utils = UtilsCNN(config)  # TODO this a bit dodge
@@ -109,29 +109,35 @@ def run_train(config):
             mem_state = actor.meta_act(mem_state)
 
             last_obs_batch = utils.batchify_obs(obs, range(config.NUM_AGENTS), config.NUM_AGENTS, config.NUM_ENVS)
-            train_state, mem_state, env_state, last_obs_batch, done, key = actor.update(train_state, mem_state,
+            train_state, mem_state, env_state, last_obs_batch, done, info, key = actor.update(train_state, mem_state,
                                                                                         env_state,
                                                                                         last_obs_batch, done, key,
                                                                                         trajectory_batch)
 
-            def callback(metrics, env_stats):
-                metric_dict = {  # "env_step": update_steps * config.NUM_ENVS * config.NUM_INNER_STEPS,
-                               "env_stats": env_stats
+            def callback(metrics, env_stats, info_dict):
+                # metric_dict = {  # "env_step": update_steps * config.NUM_ENVS * config.NUM_INNER_STEPS,
+                #                "env_stats": env_stats
+                #               }
+                metric_dict = {"denoised_return": jnp.sum(env_stats.denoised_return),
+                               # "episode_return": env_stats
                               }
 
                 for idx, agent in enumerate(config.AGENT_TYPE):
                     metric_dict[f"avg_reward_{agent}_{idx}"] = metrics.reward[:, idx, :].mean()
                     # TODO above is so so dodgy
+                    for item in info_dict[idx]:
+                        metric_dict[f"{item}"] = info_dict[idx][item]
 
                 wandb.log(metric_dict)
 
-            env_stats = jax.tree_util.tree_map(lambda x: x.mean(), utils.visitation(env_state,
-                                                                                    trajectory_batch,
-                                                                                    obs))
+            # env_stats = jax.tree_util.tree_map(lambda x: x.mean(), utils.visitation(env_state,
+            #                                                                         trajectory_batch,
+            #                                                                         obs))
+            env_stats = env_state
             # TODO remove these stats if not using them and replace with deepsea stats somehow
 
             if "MFOS" not in config.AGENT_TYPE:
-                jax.experimental.io_callback(callback, None, trajectory_batch, env_stats)
+                jax.experimental.io_callback(callback, None, trajectory_batch, env_stats, info)
 
             # update_steps = update_steps + 1
 

@@ -79,6 +79,7 @@ class MultiAgent(Agent):
     @partial(jax.jit, static_argnums=(0,))
     def update(self, train_state: Any, mem_state: Any, env_state: Any, last_obs_batch: Any, last_done: Any, key: Any,
                trajectory_batch: Any):
+        info_all = {agent: None for agent in range(self.config.NUM_AGENTS)}
         for agent in range(self.config.NUM_AGENTS):  # TODO this is probs mega slowsies
             new_mem_state = jax.tree_map(lambda x: jnp.expand_dims(x, axis=1), trajectory_batch.mem_state[agent])
             individual_trajectory_batch = trajectory_batch._replace(mem_state=new_mem_state)  # TODO check this is fine
@@ -89,13 +90,15 @@ class MultiAgent(Agent):
                                                                    individual_trajectory_batch)
             train_state[agent] = individual_runner_list[0]
             mem_state[agent] = individual_runner_list[1]
+            info_all[agent] = individual_runner_list[-2]
             key = individual_runner_list[-1]
 
-        return train_state, mem_state, env_state, last_obs_batch, last_done, key
+        return train_state, mem_state, env_state, last_obs_batch, last_done, info_all, key
 
     @partial(jax.jit, static_argnums=(0,))  # TODO dodgy code is there a way to do better here
     def meta_update(self, train_state: Any, mem_state: Any, env_state: Any, last_obs_batch: Any, last_done: Any,
                     key: Any, trajectory_batch: Any):  # TODO add better chex
+        info_all = {agent: None for agent in range(self.config.NUM_AGENTS)}
         for agent in range(self.config.NUM_AGENTS):  # TODO this is probs mega slowsies
             new_mem_state = jax.tree_map(lambda x: jnp.expand_dims(x, axis=1), trajectory_batch.mem_state[agent])
             individual_trajectory_batch = trajectory_batch._replace(mem_state=new_mem_state)  # TODO check this is fine
@@ -107,6 +110,7 @@ class MultiAgent(Agent):
                                                                         individual_trajectory_batch)
             train_state[agent] = individual_runner_list[0]
             mem_state[agent] = individual_runner_list[1]
+            info_all[agent] = individual_runner_list[-2]
             key = individual_runner_list[-1]
 
-        return train_state, mem_state, env_state, last_obs_batch, last_done, key
+        return train_state, mem_state, env_state, last_obs_batch, last_done, info_all, key

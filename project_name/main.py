@@ -16,7 +16,7 @@ def main(_):
     wandb.init(project="ProbInfMarl",
         entity=config.WANDB_ENTITY,
         config=config,
-        group="BASELINES",
+        group="deepsea_test",
         mode=config.WANDB
     )
 

@@ -47,27 +47,25 @@ class Agent:
     @partial(jax.jit, static_argnums=(0,))
     def update(self, train_state: Any, mem_state: Any, env_state: Any, last_obs_batch: Any, last_done: Any, key: Any,
                trajectory_batch: Any):  # TODO add better chex
+        info_all = {agent: None for agent in range(self.config.NUM_AGENTS)}
         new_mem_state = jax.tree_map(lambda x: jnp.expand_dims(x, axis=1), trajectory_batch.mem_state)
         trajectory_batch = trajectory_batch._replace(mem_state=new_mem_state)  # TODO check this is fine
         ac_in = (last_obs_batch, last_done)
         train_state = (train_state, mem_state, env_state, ac_in, key)
-        runner_list = self.agent.update(train_state, 0, trajectory_batch)
-        train_state = runner_list[0]
-        mem_state = runner_list[1]
-        key = runner_list[-1]
+        train_state, mem_state, env_state, info, key = self.agent.update(train_state, 0, trajectory_batch)
+        info_all[0] = info
 
-        return train_state, mem_state, env_state, last_obs_batch, last_done[jnp.newaxis, :], key
+        return train_state, mem_state, env_state, last_obs_batch, last_done, info_all, key
 
     @partial(jax.jit, static_argnums=(0,))
     def meta_update(self, train_state: Any, mem_state: Any, env_state: Any, last_obs_batch: Any, last_done: Any, key: Any,
                trajectory_batch: Any):  # TODO add better chex
+        info_all = {agent: None for agent in range(self.config.NUM_AGENTS)}
         new_mem_state = jax.tree_map(lambda x: jnp.expand_dims(x, axis=1), trajectory_batch.mem_state)
         trajectory_batch = trajectory_batch._replace(mem_state=new_mem_state)  # TODO check this is fine
         ac_in = (last_obs_batch, last_done)
         train_state = (train_state, mem_state, env_state, ac_in, key)
-        runner_list = self.agent.meta_update(train_state, 0, trajectory_batch)
-        train_state = runner_list[0]
-        mem_state = runner_list[1]
-        key = runner_list[-1]
+        train_state, mem_state, env_state, info, key = self.agent.meta_update(train_state, 0, trajectory_batch)
+        info_all[0] = info
 
-        return train_state, mem_state, env_state, last_obs_batch, last_done[jnp.newaxis, :], key
+        return train_state, mem_state, env_state, last_obs_batch, last_done[jnp.newaxis, :], info_all, key
