@@ -12,6 +12,8 @@ from .agents import Agent, MultiAgent
 from .utils import Transition, EvalTransition, Utils, UtilsCNN
 import sys
 from .gymnax_jaxmarl_wrapper import GymnaxToJaxMARL
+from .deep_sea_wrapper import BsuiteToMARL
+import bsuite
 
 
 def run_train(config):
@@ -21,10 +23,15 @@ def run_train(config):
         #                   fixed_coin_location=False)
         # env_params = MatrixEnvParams(payoff_matrix=payoff, freeze_penalty=5)
 
-        env = GymnaxToJaxMARL("DeepSea-bsuite", {"size": config.NUM_INNER_STEPS})  # TODO turn this on randomize_actions=True
+        env = GymnaxToJaxMARL("DeepSea-bsuite", {"size": config.NUM_INNER_STEPS,
+                                                 "randomize_actions": False})  # TODO turn this on randomize_actions=True
         env_params = env.default_params
 
         utils = UtilsCNN(config)  # TODO this a bit dodge
+
+        # env = bsuite.load_from_id(bsuite_id="deep_sea/1")
+        # env = BsuiteToMARL("deep_sea/1")
+
     else:
         payoff = [[3, 3], [1, 4], [4, 1], [2, 2]]  # [[-1, -1], [-3, 0], [0, -3], [-2, -2]]  # payoff matrix for the IPD
         env = IteratedMatrixGame(num_inner_steps=config.NUM_INNER_STEPS, num_outer_steps=config.NUM_META_STEPS)
@@ -98,6 +105,7 @@ def run_train(config):
                                         log_prob_n,
                                         obs_batch,
                                         mem_state,
+                                        env_state,  # TODO have added for info purposes
                                         info,
                                         )
 
@@ -109,7 +117,7 @@ def run_train(config):
             mem_state = actor.meta_act(mem_state)
 
             last_obs_batch = utils.batchify_obs(obs, range(config.NUM_AGENTS), config.NUM_AGENTS, config.NUM_ENVS)
-            train_state, mem_state, env_state, last_obs_batch, done, info, key = actor.update(train_state, mem_state,
+            train_state, mem_state, env_state, last_obs_batch, done, agent_info, key = actor.update(train_state, mem_state,
                                                                                         env_state,
                                                                                         last_obs_batch, done, key,
                                                                                         trajectory_batch)
@@ -118,7 +126,8 @@ def run_train(config):
                 # metric_dict = {  # "env_step": update_steps * config.NUM_ENVS * config.NUM_INNER_STEPS,
                 #                "env_stats": env_stats
                 #               }
-                metric_dict = {"denoised_return": jnp.sum(env_stats.denoised_return),
+                metric_dict = {"denoised_return": metrics.env_state.denoised_return[-1],
+                               # "denoised_return": jnp.sum(env_stats.denoised_return),
                                # "episode_return": env_stats
                               }
 
@@ -137,7 +146,7 @@ def run_train(config):
             # TODO remove these stats if not using them and replace with deepsea stats somehow
 
             if "MFOS" not in config.AGENT_TYPE:
-                jax.experimental.io_callback(callback, None, trajectory_batch, env_stats, info)
+                jax.experimental.io_callback(callback, None, trajectory_batch, env_stats, agent_info)
 
             # update_steps = update_steps + 1
 

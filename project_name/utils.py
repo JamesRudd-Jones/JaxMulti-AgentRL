@@ -27,6 +27,7 @@ class Transition(NamedTuple):
     log_prob: jnp.ndarray
     obs: jnp.ndarray
     mem_state: MemoryState
+    env_state: Any  # TODO added this but can change
     info: jnp.ndarray
 
 
@@ -226,6 +227,7 @@ class Utils:
 class UtilsCNN(Utils):
     def __init__(self, config):
         super().__init__(config)
+
     @staticmethod
     def batchify_obs(x: dict, agent_list, num_agents, num_envs):
         # obs = jnp.stack([x[a]["observation"] for a in agent_list]).reshape(
