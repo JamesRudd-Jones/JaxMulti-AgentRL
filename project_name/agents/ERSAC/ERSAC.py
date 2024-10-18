@@ -180,8 +180,8 @@ class ERSACAgent(AgentBase):
             def reward_predictor_loss(params, obs, actions, rewards, mask):
                 rew_pred = ens_state.apply_fn(params, obs, jnp.expand_dims(actions, axis=-1))
                 # rew_pred += reward_noise_scale * jnp.expand_dims(z_t, axis=-1)
-                # return 0.5 * jnp.mean(mask * jnp.square(jnp.squeeze(rew_pred, axis=-1) - rewards)), rew_pred
-                return jnp.mean(jnp.zeros((2))), rew_pred
+                return 0.5 * jnp.mean(mask * jnp.square(jnp.squeeze(rew_pred, axis=-1) - rewards)), rew_pred
+                # return jnp.mean(jnp.zeros((2))), rew_pred
 
             (ensemble_loss, rew_pred), grads = jax.value_and_grad(reward_predictor_loss, argnums=0, has_aux=True)(ens_state.params,
                                                                                         obs,
