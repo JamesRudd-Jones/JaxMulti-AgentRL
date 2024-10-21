@@ -56,15 +56,22 @@ class ActorCritic(nn.Module):
 
 
 class SimpleNetwork(nn.Module):
+    config: ConfigDict
     agent_config: ConfigDict
     activation: str = "tanh"
 
     @nn.compact
-    def __call__(self, x):
+    def __call__(self, obs, actions):
         if self.activation == "relu":
             activation = nn.relu
         else:
             activation = nn.tanh
+
+        if self.config.CNN:
+            obs = CNNtoLinear()(obs)
+
+        obs = nn.Dense(self.agent_config.HIDDEN_SIZE - 1, kernel_init=orthogonal(np.sqrt(2)), bias_init=constant(0.0))(obs)
+        x = jnp.concatenate((obs, actions), axis=-1)
 
         x = nn.Dense(self.agent_config.HIDDEN_SIZE, kernel_init=orthogonal(np.sqrt(2)), bias_init=constant(0.0))(x)
         x = activation(x)
@@ -81,18 +88,11 @@ class EnsembleNetwork(nn.Module):
     activation: str = "tanh"
 
     def setup(self):
-        self._net = SimpleNetwork(self.agent_config)
-        self._prior_net = SimpleNetwork(self.agent_config)
+        self._net = SimpleNetwork(self.config, self.agent_config)
+        self._prior_net = SimpleNetwork(self.config, self.agent_config)
 
     @nn.compact
     def __call__(self, obs, actions):
-
-        if self.config.CNN:
-            obs = CNNtoLinear()(obs)
-
-        obs = nn.Dense(self.agent_config.HIDDEN_SIZE - 1, kernel_init=orthogonal(np.sqrt(2)), bias_init=constant(0.0))(obs)
-        x = jnp.concatenate((obs, actions), axis=-1)
-
-        return self._net(x) + self.agent_config.PRIOR_SCALE * jax.lax.stop_gradient(self._prior_net(x))
+        return self._net(obs, actions) + self.agent_config.PRIOR_SCALE * self._prior_net(obs, actions)
 
 

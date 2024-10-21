@@ -12,6 +12,7 @@ import chex
 from project_name.agents.ERSAC import get_ERSAC_config, ActorCritic, EnsembleNetwork
 import numpy as np
 import distrax
+import flax
 import rlax
 
 
@@ -20,6 +21,10 @@ class TrainStateERSAC(NamedTuple):
     ens_state: Any  # TODO how to update this?
     log_tau: Any
     tau_opt_state: Any
+
+
+class TrainStateRP(TrainState):  # TODO check gradients do not update the static prior
+    static_prior_params: flax.core.FrozenDict
 
 
 class ERSACAgent(AgentBase):
@@ -55,9 +60,10 @@ class ERSACAgent(AgentBase):
         def create_ensemble_state(key: chex.PRNGKey) -> TrainState:  # TODO is this the best place to put it all?
             key, _key = jrandom.split(key)
             rp_params = self.rp_network.init(_key, self._init_x,
-                                             jnp.zeros((1, self.config.NUM_ENVS, 1))),
-            reward_state = TrainState.create(apply_fn=self.rp_network.apply,
-                                             params=rp_params[0],  # TODO unsure why it needs a 0 index here?
+                                             jnp.zeros((1, self.config.NUM_ENVS, 1)))["params"],
+            reward_state = TrainStateRP.create(apply_fn=self.rp_network.apply,
+                                             params=rp_params[0]["_net"],  # TODO unsure why it needs a 0 index here?
+                                             static_prior_params=rp_params[0]["_prior_net"],
                                              tx=optax.adam(self.agent_config.ENS_LR))
             return reward_state
 
@@ -98,12 +104,14 @@ class ERSACAgent(AgentBase):
         return mem_state, action, log_prob, value, key
 
     @partial(jax.jit, static_argnums=(0,))
-    def _get_reward_noise(self, ens_state: TrainState, obs: chex.Array, actions: chex.Array, key) -> chex.Array:
+    def _get_reward_noise(self, ens_state: TrainStateRP, obs: chex.Array, actions: chex.Array, key) -> chex.Array:
         ensemble_obs = jnp.broadcast_to(obs, (self.agent_config.NUM_ENSEMBLE, *obs.shape))
         ensemble_action = jnp.broadcast_to(actions, (self.agent_config.NUM_ENSEMBLE, *actions.shape))
 
-        def single_reward_noise(ens_state: TrainState, obs: chex.Array, action: chex.Array) -> chex.Array:
-            rew_pred = ens_state.apply_fn(ens_state.params, obs, jnp.expand_dims(action, axis=-1))
+        def single_reward_noise(ens_state: TrainStateRP, obs: chex.Array, action: chex.Array) -> chex.Array:
+            rew_pred = ens_state.apply_fn({"params": {"_net": ens_state.params,
+                                                      "_prior_net": ens_state.static_prior_params}},
+                                          obs, jnp.expand_dims(action, axis=-1))
             return rew_pred
 
         ensembled_reward = jax.vmap(single_reward_noise)(ens_state,
@@ -176,14 +184,17 @@ class ERSACAgent(AgentBase):
         new_tau_params = optax.apply_updates(train_state.log_tau, tau_updates)
         train_state = train_state._replace(log_tau=new_tau_params, tau_opt_state=new_tau_opt_state)
 
-        def train_ensemble(ens_state, obs, actions, rewards, mask):
-            def reward_predictor_loss(params, obs, actions, rewards, mask):
-                rew_pred = ens_state.apply_fn(params, obs, jnp.expand_dims(actions, axis=-1))
+        def train_ensemble(ens_state: TrainStateRP, obs, actions, rewards, mask):
+            def reward_predictor_loss(rp_params, prior_params, obs, actions, rewards, mask):
+                rew_pred = ens_state.apply_fn({"params": {"_net": rp_params,
+                                                      "_prior_net": prior_params}},
+                                              obs, jnp.expand_dims(actions, axis=-1))
                 # rew_pred += reward_noise_scale * jnp.expand_dims(z_t, axis=-1)
                 return 0.5 * jnp.mean(mask * jnp.square(jnp.squeeze(rew_pred, axis=-1) - rewards)), rew_pred
                 # return jnp.mean(jnp.zeros((2))), rew_pred
 
             (ensemble_loss, rew_pred), grads = jax.value_and_grad(reward_predictor_loss, argnums=0, has_aux=True)(ens_state.params,
+                                                                                                                  ens_state.static_prior_params,
                                                                                         obs,
                                                                                         actions,
                                                                                         rewards,

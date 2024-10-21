@@ -24,7 +24,8 @@ def run_train(config):
         # env_params = MatrixEnvParams(payoff_matrix=payoff, freeze_penalty=5)
 
         env = GymnaxToJaxMARL("DeepSea-bsuite", {"size": config.NUM_INNER_STEPS,
-                                                 "randomize_actions": False})  # TODO turn this on randomize_actions=True
+                                                 "sample_action_map": False})
+        # TODO check have updated the gymnax deep sea to the github change
         env_params = env.default_params
 
         utils = UtilsCNN(config)  # TODO this a bit dodge

@@ -10,7 +10,7 @@ from jax import lax
 import jax.numpy as jnp
 from gymnax.environments import environment
 from gymnax.environments import spaces
-import numpy as np
+
 
 @struct.dataclass
 class EnvState(environment.EnvState):
@@ -27,7 +27,7 @@ class EnvState(environment.EnvState):
 @struct.dataclass
 class EnvParams(environment.EnvParams):
     deterministic: bool = True
-    sample_action_map: bool = False
+    resample_action_map: bool = False
     unscaled_move_cost: float = 0.01
     randomize_actions: bool = False
     max_steps_in_episode: int = 2000
@@ -40,19 +40,13 @@ class DeepSea(environment.Environment[EnvState, EnvParams]):
     Source:
     github.com/deepmind/bsuite/blob/master/bsuite/environments/deep_sea.py.
     """
-
-    def __init__(self, size: int = 8, randomize_actions: bool = False):
+    def __init__(self, size: int = 8, sample_action_map=True, action_mapping_rng_key: chex.PRNGKey = jax.random.PRNGKey(42)):
         super().__init__()
         self.size = size
-
-        if randomize_actions:
-            # self._mapping_rng = np.random.RandomState(0)
-            # self.action_mapping = self._mapping_rng.binomial(1, 0.5, [size, size])
-
-            key = jax.random.PRNGKey(0)
-            self.action_mapping = jax.random.bernoulli(key, 0.5, shape=[size, size])
+        if sample_action_map:
+            self.fixed_action_mapping = jax.random.bernoulli(action_mapping_rng_key, 0.5, (size, size))
         else:
-            self.action_mapping = jnp.ones([size, size])
+            self.fixed_action_mapping = jnp.ones([self.size, self.size])
 
     @property
     def default_params(self) -> EnvParams:
@@ -60,12 +54,8 @@ class DeepSea(environment.Environment[EnvState, EnvParams]):
         return EnvParams()
 
     def step_env(
-        self,
-        key: chex.PRNGKey,
-        state: EnvState,
-        action: Union[int, float, chex.Array],
-        params: EnvParams,
-    ) -> Tuple[chex.Array, EnvState, jnp.ndarray, jnp.ndarray, Dict[Any, Any]]:
+        self, key: chex.PRNGKey, state: EnvState, action: int, params: EnvParams
+    ) -> Tuple[chex.Array, EnvState, float, bool, dict]:
         """Perform single timestep state transition."""
         # Pull out randomness for easier testing
         rng_reward, rng_trans = jax.random.split(key)
@@ -74,8 +64,7 @@ class DeepSea(environment.Environment[EnvState, EnvParams]):
             jax.random.uniform(rng_trans, shape=(), minval=0, maxval=1) > 1 / self.size
         )
 
-        # action_right = action == state.action_mapping[state.row, state.column]
-        action_right = action == self.action_mapping[state.row, state.column]
+        action_right = action == state.action_mapping[state.row, state.column]
         right_rand_cond = jnp.logical_or(rand_trans_cond, params.deterministic)
         right_cond = jnp.logical_and(action_right, right_rand_cond)
 
@@ -117,19 +106,11 @@ class DeepSea(environment.Environment[EnvState, EnvParams]):
         optimal_return = optimal_no_cost - params.unscaled_move_cost
 
         a_map_rand = jax.random.bernoulli(key, 0.5, (self.size, self.size))
-        a_map_determ = jnp.ones([self.size, self.size])
+        new_a_map_cond = params.resample_action_map # sample a new map?
 
-        new_a_map_cond = jnp.logical_and(
-            1 - params.deterministic, params.sample_action_map
-        )
-        old_a_map_cond = jnp.logical_and(
-            1 - params.deterministic,
-            1 - params.sample_action_map,
-        )
         action_mapping = (
-            params.deterministic * a_map_determ
-            + new_a_map_cond * a_map_rand
-            + old_a_map_cond #* self.action_mapping
+            new_a_map_cond * a_map_rand +
+            (1 - new_a_map_cond) * self.fixed_action_mapping
         )
 
         state = EnvState(
