@@ -27,7 +27,7 @@ class Transition(NamedTuple):
     log_prob: jnp.ndarray
     obs: jnp.ndarray
     mem_state: MemoryState
-    env_state: Any  # TODO added this but can change
+    # env_state: Any  # TODO added this but can change
     info: jnp.ndarray
 
 

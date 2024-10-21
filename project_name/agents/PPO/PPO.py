@@ -35,6 +35,8 @@ class PPOAgent(AgentBase):
         key, _key = jrandom.split(key)
         self.network_params = self.network.init(_key, init_x)
 
+        self.agent_config.NUM_MINIBATCHES = min(self.config.NUM_ENVS, self.agent_config.NUM_MINIBATCHES)
+
         def linear_schedule(count):  # TODO put this somewhere better
             frac = (1.0 - (count // (self.agent_config.NUM_MINIBATCHES * self.agent_config.UPDATE_EPOCHS)) / config.NUM_UPDATES)
             return self.agent_config.LR * frac
@@ -89,7 +91,7 @@ class PPOAgent(AgentBase):
         #          # avail_actions[jnp.newaxis, :],
         #          )
         _, last_val, _ = train_state.apply_fn(train_state.params, ac_in)
-        last_val = last_val.squeeze()
+        last_val = last_val.squeeze(axis=0)
 
         def _calculate_gae(traj_batch, last_val):
             def _get_advantages(gae_and_next_value, transition):
@@ -165,8 +167,8 @@ class PPOAgent(AgentBase):
             permutation = jrandom.permutation(_key, self.config.NUM_ENVS)
             traj_batch = jax.tree_map(lambda x: jnp.swapaxes(x, 0, 1), traj_batch)
             batch = (traj_batch,
-                     jnp.swapaxes(advantages, 0, 1).squeeze(),
-                     jnp.swapaxes(targets, 0, 1).squeeze())
+                     jnp.swapaxes(advantages, 0, 1),
+                     jnp.swapaxes(targets, 0, 1))
             shuffled_batch = jax.tree_util.tree_map(lambda x: jnp.take(x, permutation, axis=1), batch)
 
             minibatches = jax.tree_util.tree_map(lambda x: jnp.swapaxes(
@@ -189,4 +191,9 @@ class PPOAgent(AgentBase):
         update_state, loss_info = jax.lax.scan(_update_epoch, update_state, None, self.agent_config.UPDATE_EPOCHS)
         train_state, traj_batch, advantages, targets, key = update_state
 
-        return train_state, mem_state, env_state, ac_in, key
+        info = {"value_loss": jnp.mean(loss_info[0][0]),
+                "actor_loss": jnp.mean(loss_info[0][1]),
+                "entropy": jnp.mean(loss_info[0][2]),
+                }
+
+        return train_state, mem_state, env_state, info, key

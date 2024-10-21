@@ -10,6 +10,8 @@ import jax.profiler
 def main(_):
     config = get_config()
 
+    # TODO need to change update output to be for model info rather than env_state
+
     # TODO needs to add the v-trace at some point but kinda cba for now
     # TODO should be fairly easy using rlax if vmap the loss?
 

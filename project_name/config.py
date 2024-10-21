@@ -6,13 +6,13 @@ def get_config():
     config = config_dict.ConfigDict()
     config.SEED = 42
 
-    # config.CNN = False
-    config.CNN = True
+    config.CNN = False
+    # config.CNN = True
 
     # config.TOTAL_TIMESTEPS = 10000000
     config.NUM_UPDATES = 25000  # 40000  # 10000
-    config.NUM_INNER_STEPS = 30  # 100  # 128
-    config.NUM_META_STEPS = 100  # 100  # 500
+    config.NUM_INNER_STEPS = 100  # 30  # 128
+    config.NUM_META_STEPS = 50  # 100  # 500
     config.NUM_ENVS = 1  # 8  # TODO should add an assert for this - MUST BE SAME SIZE OR BIGGER THAN NUM_MINIBATCHES
     config.NUM_DEVICES = 1
 
@@ -26,7 +26,7 @@ def get_config():
 
     config.WANDB_ENTITY = "jamesr-j"  # change this to your wandb username
 
-    config.AGENT_TYPE = ["ERSAC"]#, "PPO"]  # ["ROMMEO", "ROMMEO"]  # ["PPO", "PPO"]
-    config.NUM_AGENTS = 1  # TODO is this really the best way?
+    config.AGENT_TYPE = ["ERSAC", "MFOS"]  # ["ROMMEO", "ROMMEO"]  # ["PPO", "PPO"]
+    config.NUM_AGENTS = 2  # TODO is this really the best way?
 
     return config
