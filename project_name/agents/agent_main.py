@@ -16,7 +16,7 @@ class Agent:
         self.config = config
         self.utils = utils
         self.agent_types = {idx: agent for idx, agent in enumerate(config.AGENT_TYPE)}
-        self.agent = import_class_from_folder(self.agent_types[0])(env=env, env_params=env_params, key=key, config=config)
+        self.agent = import_class_from_folder(self.agent_types[0])(env=env, env_params=env_params, key=key, config=config, utils=utils)
         self.train_state, self.mem_state = self.agent.create_train_state()
 
     @partial(jax.jit, static_argnums=(0,))

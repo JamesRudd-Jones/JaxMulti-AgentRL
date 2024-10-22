@@ -12,13 +12,15 @@ def main(_):
 
     # TODO need to change update output to be for model info rather than env_state
 
+    # TODO have changed PPO so double check it is correct to vanilla PPO and PPO_RNN and MFOS (as these are now correct)
+
     # TODO needs to add the v-trace at some point but kinda cba for now
     # TODO should be fairly easy using rlax if vmap the loss?
 
     wandb.init(project="ProbInfMarl",
         entity=config.WANDB_ENTITY,
         config=config,
-        group="deepsea_test",
+        group="coin-game_tests",
         mode=config.WANDB
     )
 

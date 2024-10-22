@@ -3,13 +3,13 @@ from ml_collections import config_dict
 
 def get_MFOS_config():
     config = config_dict.ConfigDict()
-    config.LR = 1
+    config.LR = 0.01
     config.GAMMA = 0.96
     config.EPS = 1
     config.GRU_HIDDEN_DIM = 16 * 3  # to make it divisible by 3 for MFOS
     config.GAE_LAMBDA = 0.95
     config.UPDATE_EPOCHS = 2
-    config.NUM_MINIBATCHES = 2  # 4
+    config.NUM_MINIBATCHES = 4
     config.CLIP_EPS = 0.2
     config.VF_COEF = 0.5
     config.ENT_COEF = 0.01

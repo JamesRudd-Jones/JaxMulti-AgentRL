@@ -17,7 +17,7 @@ class MultiAgent(Agent):
         for agent in range(config.NUM_AGENTS):
             self.agent_list[agent] = (
                 import_class_from_folder(self.agent_types[agent])(env=env, env_params=env_params, key=key,
-                                                                  config=config))
+                                                                  config=config, utils=utils))
             train_state, init_mem_state = self.agent_list[agent].create_train_state()
             self.mem_state_list[agent] = init_mem_state
             self.train_state_list[agent] = train_state

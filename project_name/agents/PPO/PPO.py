@@ -165,10 +165,9 @@ class PPOAgent(AgentBase):
             key, _key = jrandom.split(key)
 
             permutation = jrandom.permutation(_key, self.config.NUM_ENVS)
-            traj_batch = jax.tree_map(lambda x: jnp.swapaxes(x, 0, 1), traj_batch)
             batch = (traj_batch,
-                     jnp.swapaxes(advantages, 0, 1),
-                     jnp.swapaxes(targets, 0, 1))
+                     advantages,
+                     targets)
             shuffled_batch = jax.tree_util.tree_map(lambda x: jnp.take(x, permutation, axis=1), batch)
 
             minibatches = jax.tree_util.tree_map(lambda x: jnp.swapaxes(
@@ -176,8 +175,6 @@ class PPOAgent(AgentBase):
                                                  shuffled_batch, )
 
             train_state, total_loss = jax.lax.scan(_update_minbatch, train_state, minibatches)
-
-            traj_batch = jax.tree_map(lambda x: jnp.swapaxes(x, 0, 1), traj_batch)  # TODO dodge to swap back again
 
             update_state = (train_state,
                             traj_batch,

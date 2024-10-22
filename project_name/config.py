@@ -10,10 +10,10 @@ def get_config():
     # config.CNN = True
 
     # config.TOTAL_TIMESTEPS = 10000000
-    config.NUM_INNER_STEPS = 100  # 30  # 128  # ep rollout length
-    config.NUM_META_STEPS = 50  # 100  # 500  # number of ep rollouts to run
-    config.NUM_UPDATES = 1  # number of meta rollouts, should be 1 for no meta training
-    config.NUM_ENVS = 1  # 8
+    config.NUM_INNER_STEPS = 16  # 30  # 128  # ep rollout length
+    config.NUM_META_STEPS = 600  # 100  # 500  # number of ep rollouts to run
+    config.NUM_UPDATES = 500  # number of meta rollouts, should be 1 for no meta training
+    config.NUM_ENVS = 256
     config.NUM_DEVICES = 1
 
     # config.DEEP_SEA_MAP = 1  # 20
@@ -26,7 +26,7 @@ def get_config():
 
     config.WANDB_ENTITY = "jamesr-j"  # change this to your wandb username
 
-    config.AGENT_TYPE = ["PPO", "PPO"]  # ["ROMMEO", "ROMMEO"]  # ["PPO", "PPO"]
+    config.AGENT_TYPE = ["MFOS", "PPO_RNN"]  # ["ROMMEO", "ROMMEO"]  # ["PPO", "PPO"]
     config.NUM_AGENTS = 2  # TODO is this really the best way?
 
     return config

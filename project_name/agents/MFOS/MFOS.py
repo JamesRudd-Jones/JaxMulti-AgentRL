@@ -28,7 +28,8 @@ class MFOSAgent(AgentBase):
                  env,
                  env_params,
                  key,
-                 config):
+                 config,
+                 utils):
         self.config = config
         self.agent_config = get_MFOS_config()
         self.env = env
@@ -45,7 +46,7 @@ class MFOSAgent(AgentBase):
                       jnp.zeros((1, config.NUM_ENVS)),
                       )
         else:
-            init_x = (jnp.zeros((1, config.NUM_ENVS, env.observation_space(env_params).n)),
+            init_x = (jnp.zeros((1, config.NUM_ENVS, utils.observation_space(env, env_params))),
                       jnp.zeros((1, config.NUM_ENVS)),
                       )
             self.network_params = self.network.init(_key, init_hstate, init_x, init_th)
@@ -210,19 +211,17 @@ class MFOSAgent(AgentBase):
             init_hstate = jnp.reshape(mem_state.hstate, (1, self.config.NUM_ENVS, -1))
 
             permutation = jrandom.permutation(_key, self.config.NUM_ENVS)
-            traj_batch = jax.tree_map(lambda x: jnp.swapaxes(x, 0, 1), traj_batch)
-            batch = (init_hstate,  # TODO check this axis swapping etc if it works
+            batch = (init_hstate,
                      traj_batch,
-                     jnp.swapaxes(advantages, 0, 1),
-                     jnp.swapaxes(targets, 0, 1))
+                     advantages,
+                     targets)
             shuffled_batch = jax.tree_util.tree_map(lambda x: jnp.take(x, permutation, axis=1), batch)
+
             minibatches = jax.tree_util.tree_map(lambda x: jnp.swapaxes(
                 jnp.reshape(x, [x.shape[0], self.agent_config.NUM_MINIBATCHES, -1] + list(x.shape[2:]), ), 1, 0, ),
                                                  shuffled_batch, )
 
             train_state, total_loss = jax.lax.scan(_update_minbatch, train_state, minibatches)
-
-            traj_batch = jax.tree_map(lambda x: jnp.swapaxes(x, 0, 1), traj_batch)  # TODO dodge to swap back again
 
             update_state = (train_state,
                             mem_state,

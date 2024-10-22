@@ -19,12 +19,14 @@ class AgentBase:
         raise NotImplementedError
 
     @partial(jax.jit, static_argnums=(0,))
-    def update(self, runner_state: Any, agent: int, traj_batch: chex.Array) -> Tuple[Any, Any, Any, chex.Array, chex.PRNGKey]:
-        return runner_state
+    def update(self, runner_state: Any, agent: int, traj_batch: chex.Array) -> Tuple[Any, Any, Any, Any, chex.PRNGKey]:
+        train_state, mem_state, env_state, ac_in, key = runner_state
+        return train_state, mem_state, env_state, None, key
 
     @partial(jax.jit, static_argnums=(0,))
-    def meta_update(self, runner_state: Any, agent: int, traj_batch: chex.Array) -> Tuple[Any, Any, Any, chex.Array, chex.PRNGKey]:
-        return runner_state
+    def meta_update(self, runner_state: Any, agent: int, traj_batch: chex.Array) -> Tuple[Any, Any, Any, Any, chex.PRNGKey]:
+        train_state, mem_state, env_state, ac_in, key = runner_state
+        return train_state, mem_state, env_state, None, key
 
     @partial(jax.jit, static_argnums=(0,))
     def update_encoding(self, train_state: Any, mem_state: Any, agent: int, obs_batch: chex.Array, action: chex.Array,

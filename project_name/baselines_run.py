@@ -8,8 +8,10 @@ from typing import NamedTuple
 import chex
 from .pax.envs.in_the_matrix import InTheMatrix, EnvParams as MatrixEnvParams
 from .pax.envs.iterated_matrix_game import IteratedMatrixGame, EnvParams
+from .pax.envs.coin_game import CoinGame
+from .pax.envs.coin_game import EnvParams as CoinGameParams
 from .agents import Agent, MultiAgent
-from .utils import Transition, EvalTransition, Utils, UtilsCNN
+from .utils import Transition, EvalTransition, Utils_IMG, Utils_IMPITM, Utils_CG
 import sys
 from .gymnax_jaxmarl_wrapper import GymnaxToJaxMARL
 from .deep_sea_wrapper import BsuiteToMARL
@@ -19,17 +21,16 @@ import jaxmarl
 
 def run_train(config):
     if config.CNN:
-        # payoff = jnp.array([[[3, 0], [5, 1]], [[3, 5], [0, 1]]])  # TODO sort this out
-        # env = InTheMatrix(num_inner_steps=config.NUM_INNER_STEPS, num_outer_steps=config.NUM_META_STEPS,
-        #                   fixed_coin_location=False)
-        # env_params = MatrixEnvParams(payoff_matrix=payoff, freeze_penalty=5)
+        payoff = jnp.array([[[3, 0], [5, 1]], [[3, 5], [0, 1]]])
+        env = InTheMatrix(num_inner_steps=config.NUM_INNER_STEPS, num_outer_steps=config.NUM_META_STEPS,
+                          fixed_coin_location=False)
+        env_params = MatrixEnvParams(payoff_matrix=payoff, freeze_penalty=5)
+        utils = Utils_IMPITM(config)
 
-        env = GymnaxToJaxMARL("DeepSea-bsuite", {"size": config.NUM_INNER_STEPS,
-                                                 "sample_action_map": False})
-        # TODO check have updated the gymnax deep sea to the github change
-        env_params = env.default_params
-
-        utils = UtilsCNN(config)  # TODO this a bit dodge
+        # env = GymnaxToJaxMARL("DeepSea-bsuite", {"size": config.NUM_INNER_STEPS,
+        #                                          "sample_action_map": False})
+        # # TODO check have updated the gymnax deep sea to the github change
+        # env_params = env.default_params
 
         # env = bsuite.load_from_id(bsuite_id="deep_sea/1")
         # env = BsuiteToMARL("deep_sea/1")
@@ -38,10 +39,12 @@ def run_train(config):
         payoff = [[3, 3], [1, 4], [4, 1], [2, 2]]  # [[-1, -1], [-3, 0], [0, -3], [-2, -2]]  # payoff matrix for the IPD
         env = IteratedMatrixGame(num_inner_steps=config.NUM_INNER_STEPS, num_outer_steps=config.NUM_META_STEPS)
         env_params = EnvParams(payoff_matrix=payoff)
-        utils = Utils(config)  # TODO this a bit dodge
+        utils = Utils_IMG(config)
 
-        # env = jaxmarl.make("coin_game")
-        # env_params = None
+        env = CoinGame(num_inner_steps=config.NUM_INNER_STEPS, num_outer_steps=config.NUM_META_STEPS,
+                       cnn=False, egocentric=False)
+        env_params = CoinGameParams(payoff_matrix=[[1, 1, -2], [1, 1, -2]])
+        utils = Utils_CG(config)
 
     def train():
         key = jax.random.PRNGKey(config.SEED)
@@ -52,11 +55,11 @@ def run_train(config):
             actor = MultiAgent(env=env, env_params=env_params, config=config, utils=utils, key=key)
         train_state, mem_state = actor.initialise()
 
-        reset_key = jrandom.split(key, config["NUM_ENVS"])
+        reset_key = jrandom.split(key, config.NUM_ENVS)
         obs, env_state = jax.vmap(env.reset, in_axes=(0, None), axis_name="batch_axis")(reset_key, env_params)
 
         runner_state = (
-            train_state, mem_state, env_state, obs, jnp.zeros((config.NUM_AGENTS, config["NUM_ENVS"]), dtype=bool), key)
+            train_state, mem_state, env_state, obs, jnp.zeros((config.NUM_AGENTS, config.NUM_ENVS), dtype=bool), key)
 
         def _run_inner_update(update_runner_state, unused):
             runner_state, update_steps = update_runner_state
@@ -122,15 +125,18 @@ def run_train(config):
             mem_state = actor.meta_act(mem_state)  # meta acts if using a meta agent, otherwise does nothing
 
             last_obs_batch = utils.batchify_obs(obs, range(config.NUM_AGENTS), config.NUM_AGENTS, config.NUM_ENVS)
-            train_state, mem_state, env_state, last_obs_batch, done, agent_info, key = actor.update(train_state, mem_state,
-                                                                                        env_state,
-                                                                                        last_obs_batch, done, key,
-                                                                                        trajectory_batch)
+            train_state, mem_state, env_state, last_obs_batch, done, agent_info, key = actor.update(train_state,
+                                                                                                    mem_state,
+                                                                                                    env_state,
+                                                                                                    last_obs_batch,
+                                                                                                    done,
+                                                                                                    key,
+                                                                                                    trajectory_batch)
 
             def callback(metrics, env_stats, info_dict):
                 metric_dict = {  # "env_step": update_steps * config.NUM_ENVS * config.NUM_INNER_STEPS,
-                               "env_stats": env_stats
-                              }
+                    "env_stats": env_stats
+                }
                 # metric_dict = {"denoised_return": metrics.env_state.denoised_return[-1],
                 #                "denoised_return": jnp.sum(env_stats.denoised_return),
                 #                 "episode_return": env_stats
@@ -184,10 +190,12 @@ def run_train(config):
             train_state, mem_state, env_state, obs, done, key = runner_state
 
             last_obs_batch = utils.batchify_obs(obs, range(config.NUM_AGENTS), config.NUM_AGENTS, config.NUM_ENVS)
-            train_state, mem_state, env_state, last_obs_batch, done, agent_info, key = actor.meta_update(train_state, mem_state,
-                                                                                             env_state,
-                                                                                             last_obs_batch, done, key,
-                                                                                             collapsed_trajectory_batch)
+            train_state, mem_state, env_state, last_obs_batch, done, agent_info, key = actor.meta_update(train_state,
+                                                                                                         mem_state,
+                                                                                                         env_state,
+                                                                                                         last_obs_batch,
+                                                                                                         done, key,
+                                                                                                         collapsed_trajectory_batch)
 
             # TODO don't need metrics here as they do it within the _run_inner_update?
             # def callback(metrics, env_stats):

@@ -79,7 +79,7 @@ def import_class_from_folder(folder_name):
         return None
 
 
-def ipd_visitation(traj_batch: Transition, final_obs: jnp.ndarray) -> dict:
+def ipd_visitation(traj_batch: Transition, final_obs: jnp.ndarray) -> dict:  # TODO make this n player version at some point
     observations = traj_batch.obs[:, 0, :][:, jnp.newaxis, :]  # TODO index to agent 0 again
     actions = traj_batch.action[:, 0, :][:, jnp.newaxis, :]  # TODO index to agent 0 again
     final_obs = final_obs[0]  # TODO index to agent 0
@@ -116,6 +116,61 @@ def ipd_visitation(traj_batch: Transition, final_obs: jnp.ndarray) -> dict:
         "cooperation_probability/DD": action_probs[3],
         "cooperation_probability/START": action_probs[4],
     }
+
+
+def cg_visitation(state: Any) -> dict:  # TODO sort this to work
+    # [num_opps, num_envs, num_outer_episodes]  # actually is [num_envs, num_outer_episodes]
+    total_1 = state.red_coop + state.red_defect
+    total_2 = state.blue_coop + state.blue_defect
+    avg_prob_1 = jnp.sum(state.red_coop, axis=-1) / jnp.sum(total_1, axis=-1)
+    avg_prob_2 = jnp.sum(state.blue_coop, axis=-1) / jnp.sum(total_2, axis=-1)
+    final_prob_1 = state.red_coop[:, -1] / total_1[:, -1]
+    final_prob_2 = state.blue_coop[:, -1] / total_2[:, -1]
+
+    # [num_opps, num_envs, num_states]  # actually is [num_envs, num_states
+    prob_coop_1 = jnp.sum(state.coop1, axis=(0,)) / jnp.sum(state.counter, axis=(0,))
+    prob_coop_2 = jnp.sum(state.coop2, axis=(0,)) / jnp.sum(state.counter, axis=(0,))
+    count = jnp.nanmean(state.counter, axis=(0,))
+    return {
+        "prob_coop/1": jnp.nanmean(avg_prob_1),  # [1]
+        "prob_coop/2": jnp.nanmean(avg_prob_2),  # [1]
+        "final_prob_coop/1": jnp.nanmean(final_prob_1),  # [1]
+        "final_prob_coop/2": jnp.nanmean(final_prob_2),  # [1]
+        "total_coins/1": total_1.sum(),  # int
+        "total_coins/2": total_2.sum(),  # int
+        "coins_per_episode/1": total_1.sum(axis=-1).mean(axis=(0,)),  # [1]
+        "coins_per_episode/2": total_2.sum(axis=-1).mean(axis=(0,)),  # [1]
+        "final_coin_total/1": total_1[:, -1].mean(axis=(0,)),  # [1]
+        "final_coin_total/2": total_2[:, -1].mean(axis=(0,)),  # [1]
+        "cooperation_probability/1/SS": prob_coop_1[0],
+        "cooperation_probability/1/CC": prob_coop_1[1],
+        "cooperation_probability/1/CD": prob_coop_1[2],
+        "cooperation_probability/1/DC": prob_coop_1[3],
+        "cooperation_probability/1/DD": prob_coop_1[4],
+        "cooperation_probability/1/SC": prob_coop_1[5],
+        "cooperation_probability/1/SD": prob_coop_1[6],
+        "cooperation_probability/1/CS": prob_coop_1[7],
+        "cooperation_probability/1/DS": prob_coop_1[8],
+        "cooperation_probability/2/SS": prob_coop_2[0],
+        "cooperation_probability/2/CC": prob_coop_2[1],
+        "cooperation_probability/2/CD": prob_coop_2[2],
+        "cooperation_probability/2/DC": prob_coop_2[3],
+        "cooperation_probability/2/DD": prob_coop_2[4],
+        "cooperation_probability/2/SC": prob_coop_2[5],
+        "cooperation_probability/2/SD": prob_coop_2[6],
+        "cooperation_probability/2/CS": prob_coop_2[7],
+        "cooperation_probability/2/DS": prob_coop_2[8],
+        "state_visitation/SS": count[0],
+        "state_visitation/CC": count[1],
+        "state_visitation/CD": count[2],
+        "state_visitation/DC": count[3],
+        "state_visitation/DD": count[4],
+        "state_visitation/SC": count[5],
+        "state_visitation/SD": count[6],
+        "state_visitation/CS": count[7],
+        "state_visitation/DS": count[8],
+    }
+
 
 def ipditm_stats(state: Any, traj_batch: Transition, num_envs: int) -> dict:
     from .pax.envs.in_the_matrix import Actions
@@ -194,7 +249,7 @@ def remove_element_2(arr, index):  # TODO can improve?
         return jnp.concatenate([arr[:, :, :index, :], arr[:, :, index + 1:, :]])
 
 
-class Utils:
+class Utils_IMG:
     def __init__(self, config):
         self.config = config
 
@@ -223,8 +278,25 @@ class Utils:
     def visitation(env_state, traj_batch, final_obs):
         return ipd_visitation(traj_batch, final_obs)
 
+    @staticmethod
+    def observation_space(env, env_params):
+        return env.observation_space(env_params).n
 
-class UtilsCNN(Utils):
+
+class Utils_CG(Utils_IMG):
+    def __init__(self, config):
+        super().__init__(config)
+
+    @staticmethod
+    def visitation(env_state, traj_batch, final_obs):
+        return cg_visitation(env_state)
+
+    @staticmethod
+    def observation_space(env, env_params):
+        return env.observation_space(env_params).shape[0]
+
+
+class Utils_IMPITM(Utils_IMG):
     def __init__(self, config):
         super().__init__(config)
 
