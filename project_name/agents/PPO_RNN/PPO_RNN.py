@@ -204,9 +204,9 @@ class PPO_RNNAgent(AgentBase):
         update_state, loss_info = jax.lax.scan(_update_epoch, update_state, None, self.agent_config.UPDATE_EPOCHS)
         train_state, mem_state, traj_batch, advantages, targets, key = update_state
 
-        info = {"value_loss": jnp.mean(loss_info[0][0]),
-                "actor_loss": jnp.mean(loss_info[0][1]),
-                "entropy": jnp.mean(loss_info[0][2]),
+        info = {"value_loss": jnp.mean(loss_info[1][0]),
+                "actor_loss": jnp.mean(loss_info[1][1]),
+                "entropy": jnp.mean(loss_info[1][2]),
                 }
 
         return train_state, mem_state, env_state, info, key

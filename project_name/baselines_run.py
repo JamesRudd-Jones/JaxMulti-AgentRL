@@ -41,10 +41,10 @@ def run_train(config):
         env_params = EnvParams(payoff_matrix=payoff)
         utils = Utils_IMG(config)
 
-        env = CoinGame(num_inner_steps=config.NUM_INNER_STEPS, num_outer_steps=config.NUM_META_STEPS,
-                       cnn=False, egocentric=False)
-        env_params = CoinGameParams(payoff_matrix=[[1, 1, -2], [1, 1, -2]])
-        utils = Utils_CG(config)
+        # env = CoinGame(num_inner_steps=config.NUM_INNER_STEPS, num_outer_steps=config.NUM_META_STEPS,
+        #                cnn=False, egocentric=False)
+        # env_params = CoinGameParams(payoff_matrix=[[1, 1, -2], [1, 1, -2]])
+        # utils = Utils_CG(config)
 
     def train():
         key = jax.random.PRNGKey(config.SEED)
@@ -133,34 +133,9 @@ def run_train(config):
                                                                                                     key,
                                                                                                     trajectory_batch)
 
-            def callback(metrics, env_stats, info_dict):
-                metric_dict = {  # "env_step": update_steps * config.NUM_ENVS * config.NUM_INNER_STEPS,
-                    "env_stats": env_stats
-                }
-                # metric_dict = {"denoised_return": metrics.env_state.denoised_return[-1],
-                #                "denoised_return": jnp.sum(env_stats.denoised_return),
-                #                 "episode_return": env_stats
-                #               }
+            # update_steps = update_steps + 1
 
-                for idx, agent in enumerate(config.AGENT_TYPE):
-                    metric_dict[f"avg_reward_{agent}_{idx}"] = metrics.reward[:, idx, :].mean()
-                    # TODO above is so so dodgy
-                    for item in info_dict[idx]:
-                        metric_dict[f"{agent}_{idx}-{item}"] = info_dict[idx][item]
-
-                wandb.log(metric_dict)
-
-            env_stats = jax.tree_util.tree_map(lambda x: x.mean(), utils.visitation(env_state,
-                                                                                    trajectory_batch,
-                                                                                    obs))
-            # env_stats = env_state
-            # TODO remove these stats if not using them and replace with deepsea stats somehow
-
-            jax.experimental.io_callback(callback, None, trajectory_batch, env_stats, agent_info)
-
-            update_steps = update_steps + 1
-
-            return ((train_state, mem_state, env_state, obs, done, key), update_steps), trajectory_batch
+            return ((train_state, mem_state, env_state, obs, done, key), update_steps), (trajectory_batch, agent_info)
 
         def _run_meta_update(meta_runner_state, unused):
             (train_state, mem_state, env_state, obs, last_done, key), update_steps = meta_runner_state
@@ -177,7 +152,7 @@ def run_train(config):
             runner_state = (train_state, mem_state, env_state, obs,
                             jnp.zeros((config.NUM_AGENTS, config.NUM_ENVS), dtype=bool), key)
 
-            update_state, meta_trajectory_batch = jax.lax.scan(_run_inner_update,
+            update_state, (meta_trajectory_batch, agent_info) = jax.lax.scan(_run_inner_update,
                                                                (runner_state, update_steps),
                                                                None,
                                                                config.NUM_META_STEPS)
@@ -190,32 +165,64 @@ def run_train(config):
             train_state, mem_state, env_state, obs, done, key = runner_state
 
             last_obs_batch = utils.batchify_obs(obs, range(config.NUM_AGENTS), config.NUM_AGENTS, config.NUM_ENVS)
-            train_state, mem_state, env_state, last_obs_batch, done, agent_info, key = actor.meta_update(train_state,
+            train_state, mem_state, env_state, last_obs_batch, done, meta_agent_info, key = actor.meta_update(train_state,
                                                                                                          mem_state,
                                                                                                          env_state,
                                                                                                          last_obs_batch,
                                                                                                          done, key,
                                                                                                          collapsed_trajectory_batch)
 
-            # TODO don't need metrics here as they do it within the _run_inner_update?
-            # def callback(metrics, env_stats):
-            #     metric_dict = {  # "env_step": update_steps * config.NUM_ENVS * config.NUM_INNER_STEPS,
-            #                    "env_stats": env_stats
-            #                   }
-            #
-            #     for idx, agent in enumerate(config.AGENT_TYPE):
-            #         metric_dict[f"avg_reward_{agent}_{idx}"] = metrics.reward[:, idx, :].mean()
-            #         # TODO above is so so dodgy
-            #
-            #     wandb.log(metric_dict)
-            #
-            # env_stats = jax.tree_util.tree_map(lambda x: x.mean(), utils.visitation(env_state,
-            #                                                                         collapsed_trajectory_batch,
-            #                                                                         obs))
-            #
-            # jax.experimental.io_callback(callback, None, collapsed_trajectory_batch, env_stats)
+            def callback(traj_batch, env_stats, agent_info, meta_agent_info, update_steps):
+                metric_dict = {  # "env_step": update_steps * config.NUM_ENVS * config.NUM_INNER_STEPS,
+                                "env_stats": env_stats
+                }
+                # metric_dict = {"denoised_return": metrics.env_state.denoised_return[-1],
+                #                "denoised_return": jnp.sum(env_stats.denoised_return),
+                #                 "episode_return": env_stats
+                #               }
+
+                # for idx, agent in enumerate(config.AGENT_TYPE):
+                #     metric_dict[f"avg_reward_{agent}_{idx}"] = metrics.reward[:, idx, :].mean()
+                #     if agent == "MFOS":  # TODO update if get more meta agents
+                #         for item in meta_agent_info[idx]:
+                #             metric_dict[f"{agent}_{idx}-{item}"] = meta_agent_info[idx][item]
+                #     else:
+                #         for item in agent_info[idx]:
+                #             for step_idx in range(config.NUM_META_STEPS):
+                #                 metric_dict[f"{agent}_{idx}-{item}"] = agent_info[idx][item][step_idx]
+
+                # TODO below must be sooo slow but maybe it works fine?
+                for step_idx in range(config.NUM_META_STEPS):
+                    step_metric_dict = {}
+                    for idx, agent in enumerate(config.AGENT_TYPE):
+                        # shape is [num_meta_steps, num_inner_steps, num_agets, num_envs]
+                        step_metric_dict[f"avg_reward_{agent}_{idx}"] = traj_batch.reward[step_idx, :, idx, :].mean()
+                        if agent != "MFOS":
+                            for item in agent_info[idx]:
+                                step_metric_dict[f"{agent}_{idx}-{item}"] = agent_info[idx][item][step_idx]
+                    wandb.log(step_metric_dict)
+
+                for idx, agent in enumerate(config.AGENT_TYPE):
+                    if agent == "MFOS":  # TODO update if get more meta agents
+                        for item in meta_agent_info[idx]:
+                            metric_dict[f"{agent}_{idx}-{item}"] = meta_agent_info[idx][item]
+
+                metric_dict["env_step"] = (update_steps + 1) * config.NUM_META_STEPS
+
+                wandb.log(metric_dict)
+
+            env_stats = jax.tree_util.tree_map(lambda x: x.mean(), utils.visitation(env_state,
+                                                                                    collapsed_trajectory_batch,
+                                                                                    obs))
+            # env_stats = env_state
+            # TODO remove these stats if not using them and replace with deepsea stats somehow
+
+            jax.experimental.io_callback(callback, None, meta_trajectory_batch,
+                                         env_stats, agent_info, meta_agent_info, update_steps)
 
             metric = collapsed_trajectory_batch.info
+
+            update_steps += 1
 
             return ((train_state, mem_state, env_state, obs, done, key), update_steps), metric
 

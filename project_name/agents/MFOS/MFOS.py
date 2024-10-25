@@ -237,9 +237,9 @@ class MFOSAgent(AgentBase):
         train_state, mem_state, traj_batch, advantages, targets, key = update_state
         # TODO unsure if need to update the mem_state at all with the new hstate thingos
 
-        info = {"value_loss": jnp.mean(loss_info[0][0]),
-                "actor_loss": jnp.mean(loss_info[0][1]),
-                "entropy": jnp.mean(loss_info[0][2]),
+        info = {"value_loss": jnp.mean(loss_info[1][0]),
+                "actor_loss": jnp.mean(loss_info[1][1]),
+                "entropy": jnp.mean(loss_info[1][2]),
                 }
 
         return train_state, mem_state, env_state, info, key

@@ -9,7 +9,7 @@ from flax.training.train_state import TrainState
 from project_name.utils import MemoryState
 from project_name.agents import AgentBase
 import chex
-from project_name.agents.ERSAC import get_ERSAC_config, ActorCritic, EnsembleNetwork
+from project_name.agents.ERSAC_MA import get_ERSAC_MA_config, ActorCritic, EnsembleNetwork
 import numpy as np
 import distrax
 import flax
@@ -27,7 +27,7 @@ class TrainStateRP(TrainState):  # TODO check gradients do not update the static
     static_prior_params: flax.core.FrozenDict
 
 
-class ERSACAgent(AgentBase):
+class ERSAC_MAAgent(AgentBase):
     def __init__(self,
                  env,
                  env_params,
@@ -35,7 +35,7 @@ class ERSACAgent(AgentBase):
                  config,
                  utils):
         self.config = config
-        self.agent_config = get_ERSAC_config()
+        self.agent_config = get_ERSAC_MA_config()
         self.env = env
         self.env_params = env_params
         self.network = ActorCritic(env.action_space().n, config=config, agent_config=self.agent_config)
@@ -135,9 +135,6 @@ class ERSACAgent(AgentBase):
 
         obs = jnp.concatenate((traj_batch.obs, jnp.zeros((1, *traj_batch.obs.shape[1:]))), axis=0)
 
-        # check_obs = obs[:, 3]
-        # end_obs = obs[-1, 3]
-
         state_action_reward_noise = self._get_reward_noise(train_state.ens_state, traj_batch.obs, traj_batch.action, key)
 
         def ac_loss(params, trajectory, obs, tau_params, state_action_reward_noise):
@@ -156,7 +153,6 @@ class ERSACAgent(AgentBase):
                                    )
 
             value_loss = jnp.mean(jnp.square(values[:-1] - jax.lax.stop_gradient(k_estimate - tau * log_prob)))
-            # TODO is it right to use [1:] for these values etc or [:-1]?
 
             entropy = policy_dist.entropy()
 
