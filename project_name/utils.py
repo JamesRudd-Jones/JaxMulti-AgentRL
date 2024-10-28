@@ -249,6 +249,15 @@ def remove_element_2(arr, index):  # TODO can improve?
         return jnp.concatenate([arr[:, :, :index, :], arr[:, :, index + 1:, :]])
 
 
+def remove_element_3(arr, index):  # TODO can improve?
+    if arr.shape[-2] == 1:
+        raise ValueError("Cannot remove element from an array of size 1")
+    elif arr.shape[-2] == 2:
+        return arr[:, 1 - index, :]
+    else:
+        return jnp.concatenate([arr[:, :index, :], arr[:, index + 1:, :]])
+
+
 class Utils_IMG:
     def __init__(self, config):
         self.config = config

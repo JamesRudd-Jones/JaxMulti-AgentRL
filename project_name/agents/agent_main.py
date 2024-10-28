@@ -68,4 +68,4 @@ class Agent:
         train_state, mem_state, env_state, info, key = self.agent.meta_update(train_state, 0, trajectory_batch)
         info_all[0] = info
 
-        return train_state, mem_state, env_state, last_obs_batch, last_done[jnp.newaxis, :], info_all, key
+        return train_state, mem_state, env_state, last_obs_batch, last_done, info_all, key

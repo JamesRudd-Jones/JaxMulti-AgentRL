@@ -9,25 +9,24 @@ from flax.training.train_state import TrainState
 from project_name.utils import MemoryState
 from project_name.agents import AgentBase
 import chex
-from project_name.agents.ERSAC import get_ERSAC_config, ActorCritic, EnsembleNetwork
+from project_name.agents.VLITE import get_VLITE_config, ActorCritic, EnsembleNetwork
 import numpy as np
 import distrax
 import flax
 import rlax
+from distrax._src.utils import math
 
 
-class TrainStateERSAC(NamedTuple):
+class TrainStateVLITE(NamedTuple):
     ac_state: TrainState
     ens_state: Any  # TODO how to update this?
-    log_tau: Any
-    tau_opt_state: Any
 
 
 class TrainStateRP(TrainState):  # TODO check gradients do not update the static prior
     static_prior_params: flax.core.FrozenDict
 
 
-class ERSACAgent(AgentBase):
+class VLITEAgent(AgentBase):
     def __init__(self,
                  env,
                  env_params,
@@ -35,7 +34,7 @@ class ERSACAgent(AgentBase):
                  config,
                  utils):
         self.config = config
-        self.agent_config = get_ERSAC_config()
+        self.agent_config = get_VLITE_config()
         self.env = env
         self.env_params = env_params
         self.network = ActorCritic(env.action_space().n, config=config, agent_config=self.agent_config)
@@ -48,10 +47,6 @@ class ERSACAgent(AgentBase):
 
         key, _key = jrandom.split(key)
         self.network_params = self.network.init(_key, self._init_x)
-
-        self.log_tau = jnp.asarray(jnp.log(self.agent_config.INIT_TAU), dtype=jnp.float32)
-        # self.log_tau = jnp.asarray(self.agent_config.INIT_TAU, dtype=jnp.float32)
-        self.tau_optimiser = optax.adam(learning_rate=self.agent_config.TAU_LR)
 
         self.key = key
 
@@ -69,12 +64,10 @@ class ERSACAgent(AgentBase):
             return reward_state
 
         ensemble_keys = jrandom.split(self.key, self.agent_config.NUM_ENSEMBLE)
-        return (TrainStateERSAC(ac_state=TrainState.create(apply_fn=self.network.apply,
+        return (TrainStateVLITE(ac_state=TrainState.create(apply_fn=self.network.apply,
                                                            params=self.network_params,
                                                            tx=self.tx),
-                                ens_state=jax.vmap(create_ensemble_state, in_axes=(0))(ensemble_keys),
-                                log_tau=self.log_tau,
-                                tau_opt_state=self.tau_optimiser.init(self.log_tau)),
+                                ens_state=jax.vmap(create_ensemble_state, in_axes=(0))(ensemble_keys)),
                 MemoryState(hstate=jnp.zeros((self.config.NUM_ENVS, 1)),
                             extras={
                                 "values": jnp.zeros((self.config.NUM_ENVS, 1)),
@@ -93,18 +86,16 @@ class ERSACAgent(AgentBase):
         return mem_state
 
     @partial(jax.jit, static_argnums=(0,))
-    def act(self, train_state: TrainStateERSAC, mem_state: Any, ac_in: Any, key: Any):  # TODO better implement checks
+    def act(self, train_state: TrainStateVLITE, mem_state: Any, ac_in: Any, key: Any):  # TODO better implement checks
         pi, value, action_logits = train_state.ac_state.apply_fn(train_state.ac_state.params, ac_in[0])
         key, _key = jrandom.split(key)
         action = pi.sample(seed=_key)
         log_prob = pi.log_prob(action)
 
-        # action = jnp.ones_like(action)  # TODO for testing randomized actions
-
         return mem_state, action, log_prob, value, key
 
     @partial(jax.jit, static_argnums=(0,))
-    def _get_reward_noise(self, ens_state: TrainStateRP, obs: chex.Array, actions: chex.Array, key) -> chex.Array:
+    def _get_reward_noise(self, ens_state: TrainStateRP, obs: chex.Array, actions: chex.Array) -> chex.Array:
         ensemble_obs = jnp.broadcast_to(obs, (self.agent_config.NUM_ENSEMBLE, *obs.shape))
         ensemble_action = jnp.broadcast_to(actions, (self.agent_config.NUM_ENSEMBLE, *actions.shape))
 
@@ -118,9 +109,31 @@ class ERSACAgent(AgentBase):
                                                          ensemble_obs,
                                                          ensemble_action)
 
-        ensembled_reward = self.agent_config.UNCERTAINTY_SCALE * jnp.var(ensembled_reward, axis=0)
+        ensembled_reward = self.agent_config.UNCERTAINTY_SCALE * jnp.std(ensembled_reward, axis=0)
+        ensembled_reward = jnp.minimum(ensembled_reward, 1.0)
 
         return ensembled_reward
+
+    def _reward_noise_over_actions(self, ens_state: TrainStateRP, obs: chex.Array) -> chex.Array:  # TODO sort this oot
+        # run the get_reward_noise for each action choice, can probs vmap
+        actions = jnp.expand_dims(jnp.arange(0, self._action_spec.num_values, step=1), axis=-1)
+        actions = jnp.broadcast_to(actions, (actions.shape[0], obs.shape[0]))
+
+        obs = jnp.broadcast_to(obs, (actions.shape[0], *obs.shape))
+
+        reward_over_actions = jax.vmap(self._get_reward_noise, in_axes=(0, 0))(ens_state, obs, actions)
+        reward_over_actions = jnp.swapaxes(jnp.squeeze(reward_over_actions, axis=-1), 0, 1)
+
+        return reward_over_actions
+
+    @partial(jax.jit, static_argnums=(0,))
+    def _entropy_loss_fn(self, logits_t, uncertainty_t):
+        log_pi = jax.nn.log_softmax(logits_t)
+        pi_times_log_pi = math.mul_exp(log_pi, log_pi)
+        # entropy_per_timestep = -jnp.sum(pi_times_log_pi * uncertainty_t, axis=-1)  # sigma log_pi pi
+        # entropy_per_timestep = -jnp.sum(log_pi * uncertainty_t, axis=-1)  # sigma log_pi
+        # return -jnp.mean(entropy_per_timestep * mask)
+        return -jnp.sum(pi_times_log_pi * uncertainty_t, axis=-1)
 
     @partial(jax.jit, static_argnums=(0,))
     def update(self, runner_state, agent, traj_batch):
@@ -135,32 +148,29 @@ class ERSACAgent(AgentBase):
         obs = jnp.concatenate((traj_batch.obs, jnp.zeros((1, *traj_batch.obs.shape[1:]))), axis=0)
         # above is for the on policy version
 
-        # check_obs = obs[:, 3]
-        # end_obs = obs[-1, 3]
-
-        state_action_reward_noise = self._get_reward_noise(train_state.ens_state, traj_batch.obs, traj_batch.action, key)
+        state_action_reward_noise = self._get_reward_noise(train_state.ens_state, traj_batch.obs, traj_batch.action)
+        state_reward_noise = self._reward_noise_over_actions(train_state.ens_state, traj_batch.obs)
 
         def ac_loss(params, trajectory, obs, tau_params, state_action_reward_noise):
-            tau = jnp.exp(tau_params)
-
             _, values, logits = train_state.ac_state.apply_fn(params, obs)
             policy_dist = distrax.Categorical(logits=logits[:-1])  # ensure this is the same as the network distro
             log_prob = policy_dist.log_prob(trajectory.action)
 
             td_lambda = jax.vmap(rlax.td_lambda, in_axes=(1, 1, 1, 1, None), out_axes=1)
             k_estimate = td_lambda(values[:-1],
-                                   trajectory.reward + (jnp.squeeze(state_action_reward_noise, axis=-1) / (2 * tau)),
+                                   trajectory.reward + (jnp.squeeze(state_action_reward_noise, axis=-1)),
                                    (1 - trajectory.done) * self.agent_config.GAMMA,
                                    values[1:],
                                    self.agent_config.TD_LAMBDA,
                                    )
 
-            value_loss = jnp.mean(jnp.square(values[:-1] - jax.lax.stop_gradient(k_estimate - tau * log_prob)))
+            value_loss = jnp.mean(jnp.square(values[:-1] - jax.lax.stop_gradient(k_estimate)))
             # TODO is it right to use [1:] for these values etc or [:-1]?
 
-            entropy = policy_dist.entropy()
+            entropy = jax.vmap(self._entropy_loss_fn, in_axes=1, out_axes=1)(jnp.expand_dims(logits[:-1], axis=1),
+                                                                       jnp.expand_dims(state_reward_noise, axis=1))
 
-            policy_loss = -jnp.mean(log_prob * jax.lax.stop_gradient(k_estimate - values[:-1]) + tau * entropy)
+            policy_loss = -jnp.mean(log_prob * jax.lax.stop_gradient(k_estimate - values[:-1]) + entropy)
 
             return policy_loss + value_loss, entropy
 
@@ -170,20 +180,6 @@ class ERSACAgent(AgentBase):
                                                                                          train_state.log_tau,
                                                                                          state_action_reward_noise)
         train_state = train_state._replace(ac_state=train_state.ac_state.apply_gradients(grads=grads))
-
-        def tau_loss(tau_params, entropy, state_action_reward_noise):
-            tau = jnp.exp(tau_params)
-
-            tau_loss = jnp.squeeze(state_action_reward_noise, axis=-1) / (2 * tau) + (tau * entropy)
-
-            return jnp.mean(tau_loss)
-
-        tau_loss_val, tau_grads = jax.value_and_grad(tau_loss, has_aux=False, argnums=0)(train_state.log_tau,
-                                                                                         entropy,
-                                                                                         state_action_reward_noise)
-        tau_updates, new_tau_opt_state = self.tau_optimiser.update(tau_grads, train_state.tau_opt_state)
-        new_tau_params = optax.apply_updates(train_state.log_tau, tau_updates)
-        train_state = train_state._replace(log_tau=new_tau_params, tau_opt_state=new_tau_opt_state)
 
         def train_ensemble(ens_state: TrainStateRP, obs, actions, rewards, mask):
             def reward_predictor_loss(rp_params, prior_params, obs, actions, rewards, mask):
@@ -219,8 +215,6 @@ class ERSACAgent(AgentBase):
         train_state = train_state._replace(ens_state=ens_state)
 
         info = {"ac_loss": pv_loss,
-                "tau_loss": tau_loss_val,
-                "tau": jnp.exp(new_tau_params),
                 }
         for ensemble_id in range(self.agent_config.NUM_ENSEMBLE):
             info[f"Ensemble_{ensemble_id}_Reward_Pred_pv"] = rew_pred[ensemble_id, 6, 6]  # index random step and random batch

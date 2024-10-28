@@ -1,7 +1,7 @@
 from ml_collections import config_dict
 
 
-def get_ERSAC_config():
+def get_VLITE_config():
     config = config_dict.ConfigDict()
     config.PRIOR_SCALE = 1.0  # 5.0  # 0.5
     config.LR = 1e-3

@@ -27,10 +27,10 @@ def run_train(config):
         env_params = MatrixEnvParams(payoff_matrix=payoff, freeze_penalty=5)
         utils = Utils_IMPITM(config)
 
-        # env = GymnaxToJaxMARL("DeepSea-bsuite", {"size": config.NUM_INNER_STEPS,
-        #                                          "sample_action_map": False})
-        # # TODO check have updated the gymnax deep sea to the github change
-        # env_params = env.default_params
+        env = GymnaxToJaxMARL("DeepSea-bsuite", {"size": config.NUM_INNER_STEPS,
+                                                 "sample_action_map": False})
+        # check have updated the gymnax deep sea to the github change
+        env_params = env.default_params
 
         # env = bsuite.load_from_id(bsuite_id="deep_sea/1")
         # env = BsuiteToMARL("deep_sea/1")
