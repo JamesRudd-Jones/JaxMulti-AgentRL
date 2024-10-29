@@ -11,7 +11,7 @@ from .pax.envs.iterated_matrix_game import IteratedMatrixGame, EnvParams
 from .pax.envs.coin_game import CoinGame
 from .pax.envs.coin_game import EnvParams as CoinGameParams
 from .agents import Agent, MultiAgent
-from .utils import Transition, EvalTransition, Utils_IMG, Utils_IMPITM, Utils_CG
+from .utils import Transition, EvalTransition, Utils_IMG, Utils_IMPITM, Utils_CG, Utils_DEEPSEA
 import sys
 from .gymnax_jaxmarl_wrapper import GymnaxToJaxMARL
 from .deep_sea_wrapper import BsuiteToMARL
@@ -31,6 +31,7 @@ def run_train(config):
                                                  "sample_action_map": False})
         # check have updated the gymnax deep sea to the github change
         env_params = env.default_params
+        utils = Utils_DEEPSEA(config)
 
         # env = bsuite.load_from_id(bsuite_id="deep_sea/1")
         # env = BsuiteToMARL("deep_sea/1")

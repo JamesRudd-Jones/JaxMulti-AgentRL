@@ -19,10 +19,10 @@ from distrax._src.utils import math
 
 class TrainStateVLITE(NamedTuple):
     ac_state: TrainState
-    ens_state: Any  # TODO how to update this?
+    ens_state: TrainState
 
 
-class TrainStateRP(TrainState):  # TODO check gradients do not update the static prior
+class TrainStateRP(TrainState):
     static_prior_params: flax.core.FrozenDict
 
 
@@ -96,8 +96,8 @@ class VLITEAgent(AgentBase):
 
     @partial(jax.jit, static_argnums=(0,))
     def _get_reward_noise(self, ens_state: TrainStateRP, obs: chex.Array, actions: chex.Array) -> chex.Array:
-        ensemble_obs = jnp.broadcast_to(obs, (self.agent_config.NUM_ENSEMBLE, *obs.shape))
-        ensemble_action = jnp.broadcast_to(actions, (self.agent_config.NUM_ENSEMBLE, *actions.shape))
+        # ensemble_obs = jnp.broadcast_to(obs, (self.agent_config.NUM_ENSEMBLE, *obs.shape))
+        # ensemble_action = jnp.broadcast_to(actions, (self.agent_config.NUM_ENSEMBLE, *actions.shape))
 
         def single_reward_noise(ens_state: TrainStateRP, obs: chex.Array, action: chex.Array) -> chex.Array:
             rew_pred = ens_state.apply_fn({"params": {"_net": ens_state.params,
@@ -105,9 +105,9 @@ class VLITEAgent(AgentBase):
                                           obs, jnp.expand_dims(action, axis=-1))
             return rew_pred
 
-        ensembled_reward = jax.vmap(single_reward_noise)(ens_state,
-                                                         ensemble_obs,
-                                                         ensemble_action)
+        ensembled_reward = jax.vmap(single_reward_noise, in_axes=(0, None, None))(ens_state,
+                                                         obs,
+                                                         actions)
 
         ensembled_reward = self.agent_config.UNCERTAINTY_SCALE * jnp.std(ensembled_reward, axis=0)
         ensembled_reward = jnp.minimum(ensembled_reward, 1.0)
@@ -116,13 +116,14 @@ class VLITEAgent(AgentBase):
 
     def _reward_noise_over_actions(self, ens_state: TrainStateRP, obs: chex.Array) -> chex.Array:  # TODO sort this oot
         # run the get_reward_noise for each action choice, can probs vmap
-        actions = jnp.expand_dims(jnp.arange(0, self._action_spec.num_values, step=1), axis=-1)
-        actions = jnp.broadcast_to(actions, (actions.shape[0], obs.shape[0]))
+        actions = jnp.expand_dims(jnp.arange(0, self.env.action_space().n, step=1), axis=(-1, -2))
+        actions = jnp.broadcast_to(actions, (actions.shape[0], obs.shape[0], obs.shape[1]))
 
-        obs = jnp.broadcast_to(obs, (actions.shape[0], *obs.shape))
+        # obs = jnp.broadcast_to(obs, (actions.shape[0], *obs.shape))
 
-        reward_over_actions = jax.vmap(self._get_reward_noise, in_axes=(0, 0))(ens_state, obs, actions)
+        reward_over_actions = jax.vmap(self._get_reward_noise, in_axes=(None, None, 0))(ens_state, obs, actions)
         reward_over_actions = jnp.swapaxes(jnp.squeeze(reward_over_actions, axis=-1), 0, 1)
+        reward_over_actions = jnp.swapaxes(reward_over_actions, 1, 2)
 
         return reward_over_actions
 
@@ -130,9 +131,7 @@ class VLITEAgent(AgentBase):
     def _entropy_loss_fn(self, logits_t, uncertainty_t):
         log_pi = jax.nn.log_softmax(logits_t)
         pi_times_log_pi = math.mul_exp(log_pi, log_pi)
-        # entropy_per_timestep = -jnp.sum(pi_times_log_pi * uncertainty_t, axis=-1)  # sigma log_pi pi
-        # entropy_per_timestep = -jnp.sum(log_pi * uncertainty_t, axis=-1)  # sigma log_pi
-        # return -jnp.mean(entropy_per_timestep * mask)
+
         return -jnp.sum(pi_times_log_pi * uncertainty_t, axis=-1)
 
     @partial(jax.jit, static_argnums=(0,))
@@ -140,18 +139,13 @@ class VLITEAgent(AgentBase):
         traj_batch = jax.tree_map(lambda x: x[:, agent], traj_batch)
         train_state, mem_state, env_state, ac_in, key = runner_state
 
-        # key, _key = jrandom.split(key)
-        # mask = jrandom.binomial(_key, 1, self._mask_prob, self._num_ensemble)  # TODO version of jax has no binomial?
-        mask = np.random.binomial(1, self.agent_config.MASK_PROB, self.agent_config.NUM_ENSEMBLE)
-        # TODO add noise generation
-
         obs = jnp.concatenate((traj_batch.obs, jnp.zeros((1, *traj_batch.obs.shape[1:]))), axis=0)
         # above is for the on policy version
 
         state_action_reward_noise = self._get_reward_noise(train_state.ens_state, traj_batch.obs, traj_batch.action)
         state_reward_noise = self._reward_noise_over_actions(train_state.ens_state, traj_batch.obs)
 
-        def ac_loss(params, trajectory, obs, tau_params, state_action_reward_noise):
+        def ac_loss(params, trajectory, obs, state_action_reward_noise):
             _, values, logits = train_state.ac_state.apply_fn(params, obs)
             policy_dist = distrax.Categorical(logits=logits[:-1])  # ensure this is the same as the network distro
             log_prob = policy_dist.log_prob(trajectory.action)
@@ -165,10 +159,8 @@ class VLITEAgent(AgentBase):
                                    )
 
             value_loss = jnp.mean(jnp.square(values[:-1] - jax.lax.stop_gradient(k_estimate)))
-            # TODO is it right to use [1:] for these values etc or [:-1]?
 
-            entropy = jax.vmap(self._entropy_loss_fn, in_axes=1, out_axes=1)(jnp.expand_dims(logits[:-1], axis=1),
-                                                                       jnp.expand_dims(state_reward_noise, axis=1))
+            entropy = jax.vmap(self._entropy_loss_fn, in_axes=1, out_axes=1)(logits[:-1], state_reward_noise)
 
             policy_loss = -jnp.mean(log_prob * jax.lax.stop_gradient(k_estimate - values[:-1]) + entropy)
 
@@ -177,7 +169,6 @@ class VLITEAgent(AgentBase):
         (pv_loss, entropy), grads = jax.value_and_grad(ac_loss, has_aux=True, argnums=0)(train_state.ac_state.params,
                                                                                          traj_batch,
                                                                                          obs,
-                                                                                         train_state.log_tau,
                                                                                          state_action_reward_noise)
         train_state = train_state._replace(ac_state=train_state.ac_state.apply_gradients(grads=grads))
 
@@ -200,17 +191,18 @@ class VLITEAgent(AgentBase):
 
             return ensemble_loss, ens_state, rew_pred
 
-        ensemble_obs = jnp.broadcast_to(traj_batch.obs, (self.agent_config.NUM_ENSEMBLE, *traj_batch.obs.shape))
-        ensemble_action = jnp.broadcast_to(traj_batch.action,
-                                           (self.agent_config.NUM_ENSEMBLE, *traj_batch.action.shape))
-        ensemble_reward = jnp.broadcast_to(traj_batch.reward,
-                                           (self.agent_config.NUM_ENSEMBLE, *traj_batch.reward.shape))
-        ensemble_mask = np.random.binomial(1, self.agent_config.MASK_PROB, (ensemble_reward.shape))
+        # ensemble_obs = jnp.broadcast_to(traj_batch.obs, (self.agent_config.NUM_ENSEMBLE, *traj_batch.obs.shape))
+        # ensemble_action = jnp.broadcast_to(traj_batch.action,
+        #                                    (self.agent_config.NUM_ENSEMBLE, *traj_batch.action.shape))
+        # ensemble_reward = jnp.broadcast_to(traj_batch.reward,
+        #                                    (self.agent_config.NUM_ENSEMBLE, *traj_batch.reward.shape))
+        ensemble_mask = np.random.binomial(1, self.agent_config.MASK_PROB, (self.agent_config.NUM_ENSEMBLE,
+                                                                            *entropy.shape))
 
-        ensembled_loss, ens_state, rew_pred = jax.vmap(train_ensemble)(train_state.ens_state,
-                                                             ensemble_obs,
-                                                             ensemble_action,
-                                                             ensemble_reward,
+        ensembled_loss, ens_state, rew_pred = jax.vmap(train_ensemble, in_axes=(0, None, None, None, 0))(train_state.ens_state,
+                                                             traj_batch.obs,
+                                                             traj_batch.action,
+                                                             traj_batch.reward,
                                                              ensemble_mask)
         train_state = train_state._replace(ens_state=ens_state)
 

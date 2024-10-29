@@ -97,12 +97,13 @@ class EnsembleNetwork(nn.Module):
 
 
 class SimpleOppNetwork(nn.Module):
+    action_dim: Sequence[int]
     config: ConfigDict
     agent_config: ConfigDict
     activation: str = "tanh"
 
     @nn.compact
-    def __call__(self, obs, actions):
+    def __call__(self, obs):
         if self.activation == "relu":
             activation = nn.relu
         else:
@@ -111,28 +112,30 @@ class SimpleOppNetwork(nn.Module):
         if self.config.CNN:
             obs = CNNtoLinear()(obs)
 
-        obs = nn.Dense(self.agent_config.HIDDEN_SIZE - 1, kernel_init=orthogonal(np.sqrt(2)), bias_init=constant(0.0))(obs)
-        x = jnp.concatenate((obs, actions), axis=-1)
+        obs = nn.Dense(self.agent_config.HIDDEN_SIZE, kernel_init=orthogonal(np.sqrt(2)), bias_init=constant(0.0))(obs)
+        x = obs
+        # x = jnp.concatenate((obs, actions), axis=-1)
 
         x = nn.Dense(self.agent_config.HIDDEN_SIZE, kernel_init=orthogonal(np.sqrt(2)), bias_init=constant(0.0))(x)
         x = activation(x)
         x = nn.Dense(self.agent_config.HIDDEN_SIZE, kernel_init=orthogonal(np.sqrt(2)), bias_init=constant(0.0))(x)
         x = activation(x)
-        x = nn.Dense(1, kernel_init=orthogonal(1.0), bias_init=constant(0.0))(x)
+        x = nn.Dense(self.action_dim, kernel_init=orthogonal(1.0), bias_init=constant(0.0))(x)
 
         return x
 
 
 class EnsembleOppNetwork(nn.Module):
+    action_dim: Sequence[int]
     config: ConfigDict
     agent_config: ConfigDict
     activation: str = "tanh"
 
     def setup(self):
-        self._net = SimpleOppNetwork(self.config, self.agent_config)
-        self._prior_net = SimpleOppNetwork(self.config, self.agent_config)
+        self._net = SimpleOppNetwork(self.action_dim, self.config, self.agent_config)
+        self._prior_net = SimpleOppNetwork(self.action_dim, self.config, self.agent_config)
 
     @nn.compact
-    def __call__(self, obs, actions):
-        return self._net(obs, actions) + self.agent_config.PRIOR_SCALE * self._prior_net(obs, actions)
+    def __call__(self, obs):
+        return self._net(obs) + self.agent_config.PRIOR_SCALE * self._prior_net(obs)
 
