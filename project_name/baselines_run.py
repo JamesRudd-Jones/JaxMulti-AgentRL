@@ -41,11 +41,12 @@ def run_train(config):
         env = IteratedMatrixGame(num_inner_steps=config.NUM_INNER_STEPS, num_outer_steps=config.NUM_META_STEPS)
         env_params = EnvParams(payoff_matrix=payoff)
         utils = Utils_IMG(config)
+        # TODO the above game has issues with when it ends? causing loss spikes it seems
 
-        # env = CoinGame(num_inner_steps=config.NUM_INNER_STEPS, num_outer_steps=config.NUM_META_STEPS,
-        #                cnn=False, egocentric=False)
-        # env_params = CoinGameParams(payoff_matrix=[[1, 1, -2], [1, 1, -2]])
-        # utils = Utils_CG(config)
+        env = CoinGame(num_inner_steps=config.NUM_INNER_STEPS, num_outer_steps=config.NUM_META_STEPS,
+                       cnn=False, egocentric=False)
+        env_params = CoinGameParams(payoff_matrix=[[1, 1, -2], [1, 1, -2]])
+        utils = Utils_CG(config)
 
     def train():
         key = jax.random.PRNGKey(config.SEED)
@@ -68,7 +69,7 @@ def run_train(config):
             def _run_episode_step(runner_state, unused):
                 # take initial env_state
                 train_state, mem_state, env_state, obs, last_done, key = runner_state
-                obs_batch = utils.batchify_obs(obs, range(config.NUM_AGENTS), config.NUM_AGENTS, config["NUM_ENVS"])
+                obs_batch = utils.batchify_obs(obs, range(config.NUM_AGENTS), config.NUM_AGENTS, config.NUM_ENVS)
 
                 mem_state, action_n, log_prob_n, value_n, key = actor.act(train_state, mem_state, obs_batch, last_done,
                                                                           key)
@@ -83,7 +84,7 @@ def run_train(config):
 
                 # step in env
                 key, _key = jrandom.split(key)
-                key_step = jrandom.split(_key, config["NUM_ENVS"])
+                key_step = jrandom.split(_key, config.NUM_ENVS)
                 obs, env_state, reward, done, info = jax.vmap(env.step, in_axes=(0, 0, 0, None),
                                                               axis_name="batch_axis")(key_step,
                                                                                       env_state,
@@ -96,7 +97,7 @@ def run_train(config):
                 reward_batch = utils.batchify(reward, range(config.NUM_AGENTS), config.NUM_AGENTS,
                                               config["NUM_ENVS"]).squeeze(axis=-1)
 
-                nobs_batch = utils.batchify_obs(obs, range(config.NUM_AGENTS), config.NUM_AGENTS, config["NUM_ENVS"])
+                nobs_batch = utils.batchify_obs(obs, range(config.NUM_AGENTS), config.NUM_AGENTS, config.NUM_ENVS)
                 # latent_sample, latent_mean, latent_log_var, encoder_hstate = the below maybe idk where better to put basos
                 mem_state = actor.update_encoding(train_state,
                                                   mem_state,

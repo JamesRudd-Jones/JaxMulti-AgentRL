@@ -14,8 +14,7 @@ def main(_):
 
     # TODO have changed PPO so double check it is correct to vanilla PPO and PPO_RNN and MFOS (as these are now correct)
 
-    # TODO needs to add the v-trace at some point but kinda cba for now
-    # TODO should be fairly easy using rlax if vmap the loss?
+    # TODO somehow add agent configs to wandb as well
 
     wandb.init(project="ProbInfMarl",
         entity=config.WANDB_ENTITY,

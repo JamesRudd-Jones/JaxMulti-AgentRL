@@ -62,6 +62,7 @@ class PPO_RNNAgent(AgentBase):
                                   tx=self.tx),
                 MemoryState(hstate=self.init_hstate,
                             extras={
+                                "action_logits": jnp.zeros((self.config.NUM_ENVS, 1, self.env.action_space().n)),
                                 "values": jnp.zeros((self.config.NUM_ENVS, 1)),
                                 "log_probs": jnp.zeros((self.config.NUM_ENVS, 1)),
                             }, ),
@@ -70,6 +71,7 @@ class PPO_RNNAgent(AgentBase):
     @partial(jax.jit, static_argnums=(0,))
     def reset_memory(self, mem_state):
         mem_state = mem_state._replace(extras={
+            "action_logits": jnp.zeros((self.config.NUM_ENVS, 1, self.env.action_space().n)),
             "values": jnp.zeros((self.config.NUM_ENVS, 1)),
             "log_probs": jnp.zeros((self.config.NUM_ENVS, 1)),
         },
@@ -84,6 +86,8 @@ class PPO_RNNAgent(AgentBase):
         action = pi.sample(seed=_key)
         log_prob = pi.log_prob(action)
 
+        # sets shape as num_envs, 1 (idk what it is), the rest
+        mem_state.extras["action_logits"] = jnp.swapaxes(action_logits, 0, 1)  # TODO check the right dimensions here
         mem_state.extras["values"] = jnp.swapaxes(value, 0, 1)
         mem_state.extras["log_probs"] = jnp.swapaxes(log_prob, 0, 1)  # TODO sort this out a bit
 
@@ -92,7 +96,7 @@ class PPO_RNNAgent(AgentBase):
         return mem_state, action, log_prob, value, key
 
     @partial(jax.jit, static_argnums=(0,))
-    def update(self, runner_state, agent, traj_batch):
+    def update(self, runner_state, agent, traj_batch, all_mem_state):
         traj_batch = jax.tree_map(lambda x: x[:, agent], traj_batch)
         # CALCULATE ADVANTAGE
         train_state, mem_state, env_state, ac_in, key = runner_state

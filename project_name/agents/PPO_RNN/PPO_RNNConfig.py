@@ -17,7 +17,7 @@ def get_PPORNN_config():
     config.ANNEAL_LR = False
     config.MAX_GRAD_NORM = 0.5
 
-    config.LATENT_DIM = 2
-    config.KL_WEIGHT = 0.01
+    # config.LATENT_DIM = 2
+    # config.KL_WEIGHT = 0.01
 
     return config

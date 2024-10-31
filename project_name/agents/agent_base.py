@@ -19,7 +19,7 @@ class AgentBase:
         raise NotImplementedError
 
     @partial(jax.jit, static_argnums=(0,))
-    def update(self, runner_state: Any, agent: int, traj_batch: chex.Array) -> Tuple[Any, Any, Any, Any, chex.PRNGKey]:
+    def update(self, runner_state: Any, agent: int, traj_batch: chex.Array, all_mem_state) -> Tuple[Any, Any, Any, Any, chex.PRNGKey]:
         train_state, mem_state, env_state, ac_in, key = runner_state
         return train_state, mem_state, env_state, None, key
 

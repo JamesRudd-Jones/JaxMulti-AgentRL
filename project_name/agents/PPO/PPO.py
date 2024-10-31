@@ -16,7 +16,8 @@ class PPOAgent(AgentBase):
                  env,
                  env_params,
                  key,
-                 config):
+                 config,
+                 utils):
         self.config = config
         self.agent_config = get_PPO_config()
         self.env = env
@@ -28,7 +29,7 @@ class PPOAgent(AgentBase):
                       jnp.zeros((1, config.NUM_ENVS)),
                       )
         else:
-            init_x = (jnp.zeros((1, config.NUM_ENVS, env.observation_space(env_params).n)),
+            init_x = (jnp.zeros((1, config.NUM_ENVS, utils.observation_space(env, env_params))),
                       jnp.zeros((1, config.NUM_ENVS)),
                       )
 
@@ -81,15 +82,10 @@ class PPOAgent(AgentBase):
         return mem_state, action, log_prob, value, key
 
     @partial(jax.jit, static_argnums=(0,))
-    def update(self, runner_state, agent, traj_batch):
+    def update(self, runner_state, agent, traj_batch, unused_2):
         traj_batch = jax.tree_map(lambda x: x[:, agent], traj_batch)
-        # CALCULATE ADVANTAGE
+        # print(traj_batch)
         train_state, mem_state, env_state, ac_in, key = runner_state
-        # avail_actions = jnp.ones(self.env.action_space(self.env.agents[0]).n)
-        # ac_in = (last_obs[jnp.newaxis, :],
-        #          last_done[jnp.newaxis, :],
-        #          # avail_actions[jnp.newaxis, :],
-        #          )
         _, last_val, _ = train_state.apply_fn(train_state.params, ac_in)
         last_val = last_val.squeeze(axis=0)
 

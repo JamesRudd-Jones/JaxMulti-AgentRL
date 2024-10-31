@@ -3,7 +3,7 @@ from ml_collections import config_dict
 
 def get_PPO_config():
     config = config_dict.ConfigDict()
-    config.LR = 1
+    config.LR = 0.005
     config.GAMMA = 0.96
     config.EPS = 1
     config.GRU_HIDDEN_DIM = 16

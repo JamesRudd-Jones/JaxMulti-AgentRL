@@ -87,7 +87,8 @@ class MultiAgent(Agent):
             ac_in = self.utils.ac_in(last_obs_batch, last_done, agent)  # TODO is this dodge?
             individual_train_state = (train_state[agent], mem_state[agent], env_state, ac_in, key)
             individual_runner_list = self.agent_list[agent].update(individual_train_state, agent,
-                                                                   individual_trajectory_batch)
+                                                                   individual_trajectory_batch,
+                                                                   trajectory_batch.mem_state)  # TODO have added in mem_state for all if needed
             train_state[agent] = individual_runner_list[0]
             mem_state[agent] = individual_runner_list[1]
             info_all[agent] = individual_runner_list[-2]

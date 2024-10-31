@@ -135,7 +135,7 @@ class VLITEAgent(AgentBase):
         return -jnp.sum(pi_times_log_pi * uncertainty_t, axis=-1)
 
     @partial(jax.jit, static_argnums=(0,))
-    def update(self, runner_state, agent, traj_batch):
+    def update(self, runner_state, agent, traj_batch, unused_2):
         traj_batch = jax.tree_map(lambda x: x[:, agent], traj_batch)
         train_state, mem_state, env_state, ac_in, key = runner_state
 
@@ -207,6 +207,7 @@ class VLITEAgent(AgentBase):
         train_state = train_state._replace(ens_state=ens_state)
 
         info = {"ac_loss": pv_loss,
+                "entropy": jnp.mean(entropy)
                 }
         for ensemble_id in range(self.agent_config.NUM_ENSEMBLE):
             info[f"Ensemble_{ensemble_id}_Reward_Pred_pv"] = rew_pred[ensemble_id, 6, 6]  # index random step and random batch
