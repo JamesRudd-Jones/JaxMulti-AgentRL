@@ -78,6 +78,7 @@ class MFOSAgent(AgentBase):
                             th=jnp.ones((self.config.NUM_ENVS, self.agent_config.GRU_HIDDEN_DIM // 3)),
                             curr_th=jnp.ones((self.config.NUM_ENVS, self.agent_config.GRU_HIDDEN_DIM // 3)),
                             extras={
+                                "action_logits": jnp.zeros((self.config.NUM_ENVS, 1, self.env.action_space().n)),
                                 "values": jnp.zeros((self.config.NUM_ENVS, 1)),
                                 "log_probs": jnp.zeros((self.config.NUM_ENVS, 1)),
                             }, ),
@@ -86,6 +87,7 @@ class MFOSAgent(AgentBase):
     @partial(jax.jit, static_argnums=(0,))
     def reset_memory(self, mem_state):
         mem_state = mem_state._replace(extras={
+            "action_logits": jnp.zeros((self.config.NUM_ENVS, 1, self.env.action_space().n)),
             "values": jnp.zeros((self.config.NUM_ENVS, 1)),
             "log_probs": jnp.zeros((self.config.NUM_ENVS, 1)),
         },
@@ -114,6 +116,7 @@ class MFOSAgent(AgentBase):
         action = pi.sample(seed=_key)
         log_prob = pi.log_prob(action)
 
+        mem_state.extras["action_logits"] = jnp.swapaxes(action_logits, 0, 1)
         mem_state.extras["values"] = jnp.swapaxes(value, 0, 1)
         mem_state.extras["log_probs"] = jnp.swapaxes(log_prob, 0, 1)  # TODO sort this out a bit
 

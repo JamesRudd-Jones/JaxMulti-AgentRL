@@ -70,6 +70,7 @@ class VLITEAgent(AgentBase):
                                 ens_state=jax.vmap(create_ensemble_state, in_axes=(0))(ensemble_keys)),
                 MemoryState(hstate=jnp.zeros((self.config.NUM_ENVS, 1)),
                             extras={
+                                "action_logits": jnp.zeros((self.config.NUM_ENVS, 1, self.env.action_space().n)),
                                 "values": jnp.zeros((self.config.NUM_ENVS, 1)),
                                 "log_probs": jnp.zeros((self.config.NUM_ENVS, 1)),
                             })
@@ -78,6 +79,7 @@ class VLITEAgent(AgentBase):
     @partial(jax.jit, static_argnums=(0,))
     def reset_memory(self, mem_state):
         mem_state = mem_state._replace(extras={
+            "action_logits": jnp.zeros((self.config.NUM_ENVS, 1, self.env.action_space().n)),
             "values": jnp.zeros((self.config.NUM_ENVS, 1)),
             "log_probs": jnp.zeros((self.config.NUM_ENVS, 1)),
         },
@@ -91,6 +93,9 @@ class VLITEAgent(AgentBase):
         key, _key = jrandom.split(key)
         action = pi.sample(seed=_key)
         log_prob = pi.log_prob(action)
+
+        mem_state.extras["action_logits"] = jnp.swapaxes(action_logits, 0, 1)
+        mem_state = mem_state._replace(extras=mem_state.extras)
 
         return mem_state, action, log_prob, value, key
 

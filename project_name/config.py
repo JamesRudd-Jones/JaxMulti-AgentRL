@@ -26,7 +26,7 @@ def get_config():
 
     config.WANDB_ENTITY = "jamesr-j"  # change this to your wandb username
 
-    config.AGENT_TYPE = ["VLITE", "MFOS"]  # ["MFOS", "ERSAC"]  # ["ROMMEO", "ROMMEO"]
+    config.AGENT_TYPE = ["VLITE", "VLITE_MA"]  # ["MFOS", "ERSAC"]  # ["ROMMEO", "ROMMEO"]
     config.NUM_AGENTS = 2  # TODO is this really the best way?
 
     return config

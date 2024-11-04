@@ -103,7 +103,7 @@ class SimpleOppNetwork(nn.Module):
     activation: str = "tanh"
 
     @nn.compact
-    def __call__(self, obs):
+    def __call__(self, obs, ego_actions):
         if self.activation == "relu":
             activation = nn.relu
         else:
@@ -112,9 +112,8 @@ class SimpleOppNetwork(nn.Module):
         if self.config.CNN:
             obs = CNNtoLinear()(obs)
 
-        obs = nn.Dense(self.agent_config.HIDDEN_SIZE, kernel_init=orthogonal(np.sqrt(2)), bias_init=constant(0.0))(obs)
-        x = obs
-        # x = jnp.concatenate((obs, actions), axis=-1)
+        obs = nn.Dense(self.agent_config.HIDDEN_SIZE - 1, kernel_init=orthogonal(np.sqrt(2)), bias_init=constant(0.0))(obs)
+        x = jnp.concatenate((obs, ego_actions), axis=-1)
 
         x = nn.Dense(self.agent_config.HIDDEN_SIZE, kernel_init=orthogonal(np.sqrt(2)), bias_init=constant(0.0))(x)
         x = activation(x)
@@ -136,6 +135,6 @@ class EnsembleOppNetwork(nn.Module):
         self._prior_net = SimpleOppNetwork(self.action_dim, self.config, self.agent_config)
 
     @nn.compact
-    def __call__(self, obs):
-        return self._net(obs) + self.agent_config.PRIOR_SCALE * self._prior_net(obs)
+    def __call__(self, obs, ego_actions):
+        return self._net(obs, ego_actions) + self.agent_config.PRIOR_SCALE * self._prior_net(obs, ego_actions)
 
