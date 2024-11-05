@@ -1,3 +1,3 @@
 from .network import ActorCritic, EnsembleNetwork
-from .VLITEConfig import get_VLITE_config
+from .VLITE_PPOConfig import get_VLITE_PPO_config
 from .binomial import binomial

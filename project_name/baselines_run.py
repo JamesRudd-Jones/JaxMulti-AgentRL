@@ -178,27 +178,13 @@ def run_train(config):
                 metric_dict = {  # "env_step": update_steps * config.NUM_ENVS * config.NUM_INNER_STEPS,
                                 "env_stats": env_stats
                 }
-                # metric_dict = {"denoised_return": metrics.env_state.denoised_return[-1],
-                #                "denoised_return": jnp.sum(env_stats.denoised_return),
-                #                 "episode_return": env_stats
-                #               }
-
-                # for idx, agent in enumerate(config.AGENT_TYPE):
-                #     metric_dict[f"avg_reward_{agent}_{idx}"] = metrics.reward[:, idx, :].mean()
-                #     if agent == "MFOS":  # TODO update if get more meta agents
-                #         for item in meta_agent_info[idx]:
-                #             metric_dict[f"{agent}_{idx}-{item}"] = meta_agent_info[idx][item]
-                #     else:
-                #         for item in agent_info[idx]:
-                #             for step_idx in range(config.NUM_META_STEPS):
-                #                 metric_dict[f"{agent}_{idx}-{item}"] = agent_info[idx][item][step_idx]
 
                 # TODO below must be sooo slow but maybe it works fine?
                 for step_idx in range(config.NUM_META_STEPS):
                     step_metric_dict = {}
                     for idx, agent in enumerate(config.AGENT_TYPE):
-                        # shape is [num_meta_steps, num_inner_steps, num_agets, num_envs]
-                        step_metric_dict[f"avg_reward_{agent}_{idx}"] = traj_batch.reward[step_idx, :, idx, :].mean()
+                        # shape is [num_meta_steps, num_inner_steps, num_agents, num_envs]
+                        step_metric_dict[f"avg_reward_{agent}_{idx}"] = traj_batch.reward[step_idx, -1, idx, :].mean()
                         if agent != "MFOS":
                             for item in agent_info[idx]:
                                 step_metric_dict[f"{agent}_{idx}-{item}"] = agent_info[idx][item][step_idx]

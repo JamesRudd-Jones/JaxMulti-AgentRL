@@ -9,7 +9,7 @@ from flax.training.train_state import TrainState
 from project_name.utils import MemoryState
 from project_name.agents import AgentBase
 import chex
-from project_name.agents.VLITE_MA import get_VLITEMA_config, ActorCritic, EnsembleNetwork, EnsembleOppNetwork
+from project_name.agents.VLITE_MA import get_VLITEMA_config, ActorCritic, EnsembleNetwork, EnsembleOppNetwork, binomial
 import numpy as np
 import distrax
 import flax
@@ -290,8 +290,11 @@ class VLITE_MAAgent(AgentBase):
 
             return ensemble_loss, ens_state, rew_pred
 
-        ensemble_mask = np.random.binomial(1, self.agent_config.MASK_PROB, (self.agent_config.NUM_ENSEMBLE,
-                                                                            *entropy.shape))  # ensure this is okay
+        # ensemble_mask = np.random.binomial(1, self.agent_config.MASK_PROB, (self.agent_config.NUM_ENSEMBLE,
+        #                                                                     *entropy.shape))  # ensure this is okay
+        key, _key = jrandom.split(key)
+        ensemble_mask = binomial(_key, 1, self.agent_config.MASK_PROB, (self.agent_config.NUM_ENSEMBLE,
+                                                                        *entropy.shape))
 
         ensembled_loss, ens_state, rew_pred = jax.vmap(train_ensemble, in_axes=(0, None, None, None, None, 0))(
             train_state.ens_state,

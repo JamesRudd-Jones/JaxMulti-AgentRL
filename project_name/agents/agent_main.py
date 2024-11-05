@@ -52,7 +52,7 @@ class Agent:
         trajectory_batch = trajectory_batch._replace(mem_state=new_mem_state)  # TODO check this is fine
         ac_in = (last_obs_batch, last_done)
         train_state = (train_state, mem_state, env_state, ac_in, key)
-        train_state, mem_state, env_state, info, key = self.agent.update(train_state, 0, trajectory_batch)
+        train_state, mem_state, env_state, info, key = self.agent.update(train_state, 0, trajectory_batch, None)
         info_all[0] = info
 
         return train_state, mem_state, env_state, last_obs_batch, last_done, info_all, key
