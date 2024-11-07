@@ -48,6 +48,24 @@ def run_train(config):
         env_params = CoinGameParams(payoff_matrix=[[1, 1, -2], [1, 1, -2]])
         utils = Utils_CG(config)
 
+    # key = jax.random.PRNGKey(config.SEED)
+    #
+    # if config.NUM_AGENTS == 1:
+    #     actor = Agent(env=env, env_params=env_params, config=config, utils=utils, key=key)
+    # else:
+    #     actor = MultiAgent(env=env, env_params=env_params, config=config, utils=utils, key=key)
+    #
+    # for agent in range(config.NUM_AGENTS):
+    #     config[f"{actor.agent_types[agent]}_config"] = actor.agent_list[agent].agent_config()
+    #
+    # wandb.init(project="ProbInfMarl",
+    #            entity=config.WANDB_ENTITY,
+    #            config=config,
+    #            group="coin-game_tests",
+    #            mode=config.WANDB
+    #            )
+    # TODO sort out the above
+
     def train():
         key = jax.random.PRNGKey(config.SEED)
 
@@ -184,7 +202,9 @@ def run_train(config):
                     step_metric_dict = {}
                     for idx, agent in enumerate(config.AGENT_TYPE):
                         # shape is [num_meta_steps, num_inner_steps, num_agents, num_envs]
-                        step_metric_dict[f"avg_reward_{agent}_{idx}"] = traj_batch.reward[step_idx, -1, idx, :].mean()
+                        step_metric_dict[f"avg_reward_{agent}_{idx}"] = traj_batch.reward[step_idx, :, idx, :].mean()
+                        # step_metric_dict[f"avg_reward_{agent}_{idx}"] = traj_batch.reward[step_idx, -1, idx, :].mean()
+                        # TODO have added the -1 for deepsea
                         if agent != "MFOS":
                             for item in agent_info[idx]:
                                 step_metric_dict[f"{agent}_{idx}-{item}"] = agent_info[idx][item][step_idx]

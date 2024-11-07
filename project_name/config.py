@@ -6,13 +6,13 @@ def get_config():
     config = config_dict.ConfigDict()
     config.SEED = 42
 
-    # config.CNN = False
-    config.CNN = True
+    config.CNN = False
+    # config.CNN = True
 
     # config.TOTAL_TIMESTEPS = 10000000
-    config.NUM_INNER_STEPS = 30  # 16  # ep rollout length
-    config.NUM_META_STEPS = 40000  # 100  # 500  # number of ep rollouts to run
-    config.NUM_UPDATES = 1  # 500  # 500  # number of meta rollouts, should be 1 for no meta training
+    config.NUM_INNER_STEPS = 16  # 30  # ep rollout length
+    config.NUM_META_STEPS = 100  # 100  # 500  # number of ep rollouts to run
+    config.NUM_UPDATES = 2000  # 500  # number of meta rollouts, should be 1 for no meta training
     config.NUM_ENVS = 1
     config.NUM_DEVICES = 1
 
@@ -26,8 +26,8 @@ def get_config():
 
     config.WANDB_ENTITY = "jamesr-j"  # change this to your wandb username
 
-    config.AGENT_TYPE = ["VLITE"]  # , "PPO_RNN"]  # ["MFOS", "ERSAC"]  # ["ROMMEO", "ROMMEO"]
-    config.NUM_AGENTS = 1  # TODO is this really the best way?
+    config.AGENT_TYPE = ["VLITE_MA", "MFOS"]  # , "PPO_RNN"]  # ["MFOS", "ERSAC"]  # ["ROMMEO", "ROMMEO"]
+    config.NUM_AGENTS = 2  # TODO is this really the best way?
 
     config.CTDE = False
     # config.CTDE = True
