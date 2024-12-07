@@ -112,8 +112,10 @@ class VLITE_MAAgent(AgentBase):
         return mem_state, action, log_prob, value, key
 
     @partial(jax.jit, static_argnums=(0,))
-    def _get_opp_logits(self, ens_state: TrainStateRP, obs: chex.Array, ego_actions, key) -> Tuple[chex.Array, chex.Array]:
-        def single_opp_logits(ens_state: TrainStateRP, obs: chex.Array, ego_actions, key) -> Tuple[chex.Array, chex.Array]:
+    def _get_opp_logits(self, ens_state: TrainStateRP, obs: chex.Array, ego_actions, key) -> Tuple[
+        chex.Array, chex.Array]:
+        def single_opp_logits(ens_state: TrainStateRP, obs: chex.Array, ego_actions, key) -> Tuple[
+            chex.Array, chex.Array]:
             logits = ens_state.apply_fn({"params": {"_net": ens_state.params,
                                                     "_prior_net": ens_state.static_prior_params}},
                                         obs, jnp.expand_dims(ego_actions, axis=-1))
@@ -124,7 +126,8 @@ class VLITE_MAAgent(AgentBase):
             return action, logits
 
         ens_key = jrandom.split(key, self.agent_config.NUM_ENSEMBLE)
-        all_action, all_opp_logits = jax.vmap(single_opp_logits, in_axes=(0, None, None, 0))(ens_state, obs, ego_actions, ens_key)
+        all_action, all_opp_logits = jax.vmap(single_opp_logits, in_axes=(0, None, None, 0))(ens_state, obs,
+                                                                                             ego_actions, ens_key)
 
         all_action = self.agent_config.ACTION_UNCERTAINTY_SCALE * jnp.var(all_action, axis=0)
         # all_action = jnp.minimum(all_action, 1.0)
@@ -132,16 +135,18 @@ class VLITE_MAAgent(AgentBase):
         return all_action, all_opp_logits
 
     @partial(jax.jit, static_argnums=(0,))
-    def _opp_logits_over_actions(self, ens_state: TrainStateRP, obs: chex.Array, key) -> chex.Array:
+    def _opp_logits_over_actions(self, ens_state: TrainStateRP, obs: chex.Array, key) -> Tuple[chex.Array, chex.Array]:
         # run the get_reward_noise for each action choice, can probs vmap
         ego_actions = jnp.expand_dims(jnp.arange(0, self.env.action_space().n, step=1), axis=(-1, -2))
         ego_actions = jnp.broadcast_to(ego_actions, (ego_actions.shape[0], obs.shape[0], obs.shape[1]))
 
-        action_over_actions, _ = jax.vmap(self._get_opp_logits, in_axes=(None, None, 0, None))(ens_state, obs, ego_actions, key)
-        action_over_actions = jnp.swapaxes(action_over_actions, 0, 1)
-        action_over_actions = jnp.swapaxes(action_over_actions, 1, 2)
+        action_over_actions, logits_over_actions = jax.vmap(self._get_opp_logits, in_axes=(None, None, 0, None))(ens_state, obs,
+                                                                                               ego_actions, key)
+        action_over_actions = jnp.moveaxis(action_over_actions, 0, 2)
 
-        return action_over_actions
+        logits_over_actions = jnp.moveaxis(logits_over_actions, 0, 3)  # TODO check this is okay
+
+        return action_over_actions, logits_over_actions
 
     @partial(jax.jit, static_argnums=(0,))
     def _get_reward_noise(self, ens_state: TrainStateRP, obs: chex.Array, actions: chex.Array,
@@ -166,15 +171,17 @@ class VLITE_MAAgent(AgentBase):
     def _reward_noise_over_actions(self, ens_state: TrainStateRP, obs: chex.Array) -> chex.Array:
         # run the get_reward_noise for each action choice, can probs vmap twice?
         actions = jnp.arange(0, self.env.action_space().n, step=1)
-        actions = jnp.broadcast_to(jnp.expand_dims(actions, axis=(-2, -1)), (*actions.shape, obs.shape[0], self.config.NUM_ENVS))
+        actions = jnp.broadcast_to(jnp.expand_dims(actions, axis=(-2, -1)),
+                                   (*actions.shape, obs.shape[0], self.config.NUM_ENVS))
 
         opp_actions = jnp.arange(0, self.env.action_space().n, step=1)
         opp_actions = jnp.broadcast_to(jnp.expand_dims(opp_actions, axis=(-2, -1)),
-                                   (*opp_actions.shape, obs.shape[0], self.config.NUM_ENVS))
+                                       (*opp_actions.shape, obs.shape[0], self.config.NUM_ENVS))
 
         # obs = jnp.broadcast_to(obs, (actions.shape[0], actions.shape[1], *obs.shape))
 
-        reward_over_actions = jax.vmap(jax.vmap(self._get_reward_noise, in_axes=(None, None, None, 0)), in_axes=(None, None, 0, None))(ens_state, obs, actions, opp_actions)
+        reward_over_actions = jax.vmap(jax.vmap(self._get_reward_noise, in_axes=(None, None, None, 0)),
+                                       in_axes=(None, None, 0, None))(ens_state, obs, actions, opp_actions)
         # TODO check the above aswell
 
         reward_over_actions = jnp.swapaxes(jnp.squeeze(reward_over_actions, axis=-1), 0, 2)
@@ -206,6 +213,7 @@ class VLITE_MAAgent(AgentBase):
         #
         # return -jnp.sum(uncertainty_t * joint_prob * (log_pi_ego + log_pi_opp), axis=(-2, -1))
         return -jnp.sum(uncertainty_t * opp_action_noise * joint_prob * (log_pi_ego + log_pi_opp), axis=(-2, -1))
+        # return jnp.zeros((logits_t_ego.shape[0], logits_t_ego.shape[-1]))
 
     @partial(jax.jit, static_argnums=(0,))
     def update(self, runner_state, agent, traj_batch, all_mem_state):
@@ -222,13 +230,16 @@ class VLITE_MAAgent(AgentBase):
         state_action_reward_noise = self._get_reward_noise(train_state.ens_state, traj_batch.obs, traj_batch.action,
                                                            action_opp)
         state_reward_noise = self._reward_noise_over_actions(train_state.ens_state, traj_batch.obs)
-        opp_action_noise = self._opp_logits_over_actions(train_state.opp_state, traj_batch.obs, key)
+        opp_action_noise, opp_logits_all = self._opp_logits_over_actions(train_state.opp_state, traj_batch.obs, key)
         _, opp_logits = self._get_opp_logits(train_state.opp_state, traj_batch.obs, traj_batch.action, key)
-        opp_logits = jnp.expand_dims(opp_logits[0], axis=2)
+        key, _key = jrandom.split(key)
+        opp_int = jrandom.randint(_key, (1,), 0, self.agent_config.NUM_ENSEMBLE - 1)  # thompson sample?
+        opp_logits = jnp.squeeze(opp_logits.at[opp_int].get(), axis=0)  # TODO check this
+        opp_logits_all = jnp.squeeze(opp_logits_all.at[opp_int].get(), axis=0)   # TODO check this
+        # opp_logits = jnp.expand_dims(opp_logits[0], axis=2)
         # opp_logits = opp_policy
-        # TODO how to pick one ensemble model as my like thompson sampling opp for an episode? currently just index 0
 
-        def ac_loss(params, opp_logits, trajectory, obs, state_action_reward_noise, opp_action_noise, action_opp):
+        def ac_loss(params, opp_logits, opp_logits_all, trajectory, obs, state_action_reward_noise, opp_action_noise, action_opp):
             # TODO should this be a joint critic?
             _, values, logits = train_state.ac_state.apply_fn(params, obs)
             policy_dist = distrax.Categorical(logits=logits[:-1])  # ensure this is the same as the network distro
@@ -246,21 +257,26 @@ class VLITE_MAAgent(AgentBase):
             # TODO this be the same since we are using values instead of qs and implicitly covers all actions?
 
             entropy = jax.vmap(self._entropy_loss_fn, in_axes=1, out_axes=1)(logits[:-1],
-                                                                             opp_logits,
-                                                                             state_reward_noise,
-                                                                             opp_action_noise)
+                                                                             jax.lax.stop_gradient(opp_logits_all),
+                                                                             jax.lax.stop_gradient(state_reward_noise),
+                                                                             jax.lax.stop_gradient(opp_action_noise))
             # TODO probably be good to add a mask to ensure don't do entropy on end steps
 
-            opp_policy_dist = distrax.Categorical(logits=jnp.squeeze(opp_logits, axis=2))
+            opp_policy_dist = distrax.Categorical(logits=opp_logits)
             opp_log_prob = opp_policy_dist.log_prob(action_opp)
 
-            policy_loss = -jnp.mean((log_prob + jax.lax.stop_gradient(opp_log_prob)) * jax.lax.stop_gradient(k_estimate - values[:-1]) + entropy)
+            policy_loss = -jnp.mean((log_prob + jax.lax.stop_gradient(opp_log_prob)) * jax.lax.stop_gradient(
+                k_estimate - values[:-1]) + entropy)
             # policy_loss = -jnp.mean(log_prob * jax.lax.stop_gradient(k_estimate - values[:-1]) + entropy)
 
-            return policy_loss + value_loss, entropy
+            total_loss = policy_loss + value_loss
+            # total_loss = value_loss  # TODO have changed this for now from the above
+
+            return total_loss, entropy
 
         (pv_loss, entropy), grads = jax.value_and_grad(ac_loss, has_aux=True, argnums=0)(train_state.ac_state.params,
                                                                                          opp_logits,
+                                                                                         opp_logits_all,
                                                                                          traj_batch,
                                                                                          obs,
                                                                                          state_action_reward_noise,
@@ -273,7 +289,8 @@ class VLITE_MAAgent(AgentBase):
             def reward_predictor_loss(rp_params, prior_params, obs, actions, opp_actions, rewards, mask):
                 rew_pred = ens_state.apply_fn({"params": {"_net": rp_params,
                                                           "_prior_net": prior_params}},
-                                              obs, jnp.expand_dims(actions, axis=-1), jnp.expand_dims(opp_actions, axis=-1))
+                                              obs, jnp.expand_dims(actions, axis=-1),
+                                              jnp.expand_dims(opp_actions, axis=-1))
                 # rew_pred += reward_noise_scale * jnp.expand_dims(z_t, axis=-1)
                 return 0.5 * jnp.mean(mask * jnp.square(jnp.squeeze(rew_pred, axis=-1) - rewards)), rew_pred
                 # return jnp.mean(jnp.zeros((2))), rew_pred
@@ -290,8 +307,6 @@ class VLITE_MAAgent(AgentBase):
 
             return ensemble_loss, ens_state, rew_pred
 
-        # ensemble_mask = np.random.binomial(1, self.agent_config.MASK_PROB, (self.agent_config.NUM_ENSEMBLE,
-        #                                                                     *entropy.shape))  # ensure this is okay
         key, _key = jrandom.split(key)
         ensemble_mask = binomial(_key, 1, self.agent_config.MASK_PROB, (self.agent_config.NUM_ENSEMBLE,
                                                                         *entropy.shape))
@@ -308,9 +323,8 @@ class VLITE_MAAgent(AgentBase):
         # train opp ensemble
         def train_opp_ensemble(opp_state: TrainStateRP, obs, ego_actions, actions, mask, key):
             def action_predictor_loss(rp_params, prior_params, obs, ego_actions, actions, mask, key):
-                logit_pred = opp_state.apply_fn({"params": {"_net": rp_params,
-                                                          "_prior_net": prior_params}},
-                                              obs, jnp.expand_dims(ego_actions, axis=-1))
+                logit_pred = opp_state.apply_fn({"params": {"_net": rp_params, "_prior_net": prior_params}},
+                                                obs, jnp.expand_dims(ego_actions, axis=-1))
                 key, _key = jrandom.split(key)
                 rho = distrax.Categorical(logits=logit_pred)
                 action_pred = rho.sample(seed=_key)
@@ -319,7 +333,7 @@ class VLITE_MAAgent(AgentBase):
                 categorical_cross_entropy = optax.softmax_cross_entropy_with_integer_labels(logit_pred, actions)
 
                 return jnp.mean(mask * categorical_cross_entropy), action_pred
-                # return jnp.mean(jnp.zeros((2))), rew_pred
+                # return jnp.mean(jnp.zeros((2,))), rew_pred
 
             (opp_ens_loss, action_pred), grads = jax.value_and_grad(action_predictor_loss, argnums=0, has_aux=True)(
                 opp_state.params,
@@ -328,7 +342,7 @@ class VLITE_MAAgent(AgentBase):
                 ego_actions,
                 actions,
                 mask,
-             key)
+                key)
             opp_state = opp_state.apply_gradients(grads=grads)
 
             return opp_ens_loss, opp_state, action_pred
@@ -346,12 +360,12 @@ class VLITE_MAAgent(AgentBase):
         train_state = train_state._replace(opp_state=opp_state)
 
         info = {"ac_loss": pv_loss,
-                "entropy": jnp.mean(entropy)
+                "entropy": jnp.mean(entropy),
                 }
         for ensemble_id in range(self.agent_config.NUM_ENSEMBLE):
             info[f"Ensemble_{ensemble_id}_Reward_Pred_pv"] = rew_pred[ensemble_id, 6, 6]  # index random step/batch
             info[f"Ensemble_{ensemble_id}_Loss"] = ensembled_loss[ensemble_id]
-            # info[f"Opp_Ensemble_{ensemble_id}_Action_Pred"] = action_pred[ensemble_id, 6, 6]  # index random step/batch
-            # info[f"Opp_Ensemble_{ensemble_id}_Loss"] = opp_ens_loss[ensemble_id]
+            info[f"Opp_Ensemble_{ensemble_id}_Action_Pred"] = action_pred[ensemble_id, 6, 6]  # index random step/batch
+            info[f"Opp_Ensemble_{ensemble_id}_Loss"] = opp_ens_loss[ensemble_id]
 
         return train_state, mem_state, env_state, info, key

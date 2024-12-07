@@ -202,18 +202,22 @@ def run_train(config):
                     step_metric_dict = {}
                     for idx, agent in enumerate(config.AGENT_TYPE):
                         # shape is [num_meta_steps, num_inner_steps, num_agents, num_envs]
-                        step_metric_dict[f"avg_reward_{agent}_{idx}"] = traj_batch.reward[step_idx, :, idx, :].mean()
+                        step_metric_dict[f"avg_reward_{agent}"] = traj_batch.reward[step_idx, :, idx, :].mean()
+                        # step_metric_dict[f"avg_reward_{agent}_{idx}"] = traj_batch.reward[step_idx, :, idx, :].mean()
                         # step_metric_dict[f"avg_reward_{agent}_{idx}"] = traj_batch.reward[step_idx, -1, idx, :].mean()
                         # TODO have added the -1 for deepsea
                         if agent != "MFOS":
                             for item in agent_info[idx]:
-                                step_metric_dict[f"{agent}_{idx}-{item}"] = agent_info[idx][item][step_idx]
+                                step_metric_dict[f"{agent}-{item}"] = agent_info[idx][item][step_idx]
+                                # step_metric_dict[f"{agent}_{idx}-{item}"] = agent_info[idx][item][step_idx]
                     wandb.log(step_metric_dict)
 
                 for idx, agent in enumerate(config.AGENT_TYPE):
                     if agent == "MFOS":  # TODO update if get more meta agents
                         for item in meta_agent_info[idx]:
-                            metric_dict[f"{agent}_{idx}-{item}"] = meta_agent_info[idx][item]
+                            metric_dict[f"{agent}-{item}"] = meta_agent_info[idx][item]
+                            # metric_dict[f"{agent}_{idx}-{item}"] = meta_agent_info[idx][item]
+                # TODO have removed the idx from wandb
 
                 metric_dict["env_step"] = (update_steps + 1) * config.NUM_META_STEPS
 

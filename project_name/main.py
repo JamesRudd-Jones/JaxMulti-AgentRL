@@ -12,9 +12,13 @@ def main(_):
 
     # TODO need to change update output to be for model info rather than env_state
 
+    # TODO sort out running log_prob and value through act and put in mem state instead, ensure PPO and all still work okay
+
     # TODO have changed PPO so double check it is correct to vanilla PPO and PPO_RNN and MFOS (as these are now correct)
 
     # TODO somehow add agent configs to wandb as well
+
+    # TODO make rnn an option for all rather than diff agents, be cool if can still call agent PPO_RNN for example
 
     wandb.init(project="ProbInfMarl",
         entity=config.WANDB_ENTITY,

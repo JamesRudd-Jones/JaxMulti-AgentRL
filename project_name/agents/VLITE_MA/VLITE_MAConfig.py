@@ -10,8 +10,8 @@ def get_VLITEMA_config():
     config.GAMMA = 0.99
     config.TD_LAMBDA = 0.8
     config.REWARD_NOISE_SCALE = 0.1  # set in ersac paper
-    config.UNCERTAINTY_SCALE = 3.0
-    config.ACTION_UNCERTAINTY_SCALE = 3.0
+    config.UNCERTAINTY_SCALE = 6.0  # 3.0
+    config.ACTION_UNCERTAINTY_SCALE = 6.0  # 3.0
     config.MASK_PROB = 0.8  # 0.6
     config.HIDDEN_SIZE = 128
     config.NUM_ENSEMBLE = 10

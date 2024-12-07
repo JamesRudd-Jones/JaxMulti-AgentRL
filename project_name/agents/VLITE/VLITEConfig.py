@@ -7,10 +7,10 @@ def get_VLITE_config():
     config.LR = 1e-4
     config.ENS_LR = 1e-4
     config.GAMMA = 0.99
-    config.TD_LAMBDA = 0.6
+    config.TD_LAMBDA = 0.8
     config.REWARD_NOISE_SCALE = 0.1  # set in ersac paper
-    config.UNCERTAINTY_SCALE = 3.0
-    config.MASK_PROB = 0.6
+    config.UNCERTAINTY_SCALE = 1.0  # 3.0
+    config.MASK_PROB = 0.8  # 0.6
     config.HIDDEN_SIZE = 128
     config.NUM_ENSEMBLE = 10
 
