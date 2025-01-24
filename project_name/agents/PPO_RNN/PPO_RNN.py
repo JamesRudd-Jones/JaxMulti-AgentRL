@@ -26,15 +26,15 @@ class PPO_RNNAgent(AgentBase):
         key, _key = jrandom.split(key)
         init_hstate = ScannedRNN.initialize_carry(config.NUM_ENVS, self.agent_config.GRU_HIDDEN_DIM)
 
-        if self.config.CNN:
-            init_x = ((jnp.zeros((1, config.NUM_ENVS, *env.observation_space(env_params)["observation"].shape)),
-                       jnp.zeros((1, config.NUM_ENVS, env.observation_space(env_params)["inventory"].shape))),
-                      jnp.zeros((1, config.NUM_ENVS)),
-                      )
-        else:
-            init_x = (jnp.zeros((1, config.NUM_ENVS, utils.observation_space(env, env_params))),
-                      jnp.zeros((1, config.NUM_ENVS)),
-                      )
+        # if self.config.CNN:
+        #     init_x = ((jnp.zeros((1, config.NUM_ENVS, *utils.observation_space(env_params)["observation"].shape)),
+        #                jnp.zeros((1, config.NUM_ENVS, utils.observation_space(env_params)["inventory"].shape))),
+        #               jnp.zeros((1, config.NUM_ENVS)),
+        #               )
+        # else:
+        init_x = (jnp.zeros((1, config.NUM_ENVS, *utils.observation_space(env, env_params))),
+                  jnp.zeros((1, config.NUM_ENVS)),
+                  )
 
         self.network_params = self.network.init(_key, init_hstate, init_x)
         self.init_hstate = ScannedRNN.initialize_carry(config.NUM_ENVS,

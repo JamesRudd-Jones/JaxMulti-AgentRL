@@ -43,11 +43,12 @@ class ScannedRNN(nn.Module):
 class CNNtoLinear(nn.Module):
     @nn.compact
     def __call__(self, obsinv):
-        obs, inventory = obsinv
+        # obs, inventory = obsinv  # TODO some check if more than one dimension to split but otherwise leave it
+        obs = obsinv
         conv_layer = nn.Conv(features=16, kernel_size=(3, 3), strides=(1, 1), padding="SAME")(obs)
         conv_layer = nn.relu(conv_layer)
         flatten_layer = conv_layer.reshape((obs.shape[0], obs.shape[1], -1))  # TODO check this
-        concat_layer = jnp.concatenate((flatten_layer, inventory), axis=-1)
+        concat_layer = flatten_layer  # jnp.concatenate((flatten_layer, inventory), axis=-1)
         last_layer = nn.Dense(16)(concat_layer)  # TODO maybe 16 as a hyperparam
         return last_layer
 

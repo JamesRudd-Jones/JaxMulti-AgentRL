@@ -11,12 +11,14 @@ from .pax.envs.iterated_matrix_game import IteratedMatrixGame, EnvParams
 from .pax.envs.coin_game import CoinGame
 from .pax.envs.coin_game import EnvParams as CoinGameParams
 from .agents import Agent, MultiAgent
-from .utils import Transition, EvalTransition, Utils_IMG, Utils_IMPITM, Utils_CG, Utils_DEEPSEA
+from .utils import Transition, EvalTransition, Utils_IMG, Utils_IMPITM, Utils_CG, Utils_DEEPSEA, Utils_KS
 import sys
 from .gymnax_jaxmarl_wrapper import GymnaxToJaxMARL
 from .deep_sea_wrapper import BsuiteToMARL
 import bsuite
 import jaxmarl
+from .envs.KS_JAX import KS_JAX
+from .envs.KS_JAX import EnvParams as KSParams
 
 
 def run_train(config):
@@ -47,6 +49,10 @@ def run_train(config):
                        cnn=False, egocentric=False)
         env_params = CoinGameParams(payoff_matrix=[[1, 1, -2], [1, 1, -2]])
         utils = Utils_CG(config)
+
+        env = KS_JAX()
+        env_params = KSParams()
+        utils = Utils_KS(config)
 
     # key = jax.random.PRNGKey(config.SEED)
     #

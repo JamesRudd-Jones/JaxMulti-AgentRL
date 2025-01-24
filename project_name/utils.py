@@ -357,3 +357,15 @@ class Utils_DEEPSEA(Utils_IMG):
 
     def visitation(self, env_state, traj_batch, final_obs):
         return None  # ipditm_stats(env_state, traj_batch, self.config.NUM_ENVS)
+
+    @staticmethod
+    def observation_space(env, env_params):
+        return env.observation_space(env_params).shape
+
+class Utils_KS(Utils_IMG):
+    def __init__(self, config):
+        super().__init__(config)
+
+    @staticmethod
+    def observation_space(env, env_params):
+        return env.observation_space(env_params).shape
