@@ -36,7 +36,7 @@ class EnvParams(environment.EnvParams):  # TODO sort this out at some point to m
     L: int = 22
     dt: float = 0.05
     x: np.ndarray = np.loadtxt('project_name/envs/x.dat')  # select space discretization of the target solution
-    target_solution: str = "u2"
+    U_bf: np.ndarray = np.loadtxt('project_name/envs/u2.dat')  # select u1, u2 or u3 as target solution
 
 
 class KS_JAX(environment.Environment[EnvState, EnvParams]):
@@ -65,8 +65,6 @@ class KS_JAX(environment.Environment[EnvState, EnvParams]):
                                                                        self.x_S[self.x_S.size // 2],
                                                                        self.x_S[1] - self.x_S[0],
                                                                       ).T
-
-        self.U_bf = np.loadtxt(f'project_name/envs/{self.params.target_solution}.dat')  # select u1, u2 or u3 as target solution
 
     @property
     def default_params(self) -> EnvParams:
@@ -103,21 +101,23 @@ class KS_JAX(environment.Environment[EnvState, EnvParams]):
         final_runner_state = jax.lax.scan(_runge_kutta_update, (u_K, 0), None, 3)
         u_S = jnp.fft.irfft(final_runner_state[0][0], axis=-1)
 
-        reward = -jnp.linalg.norm(u_S - self.U_bf)
+        reward = -jnp.linalg.norm(u_S - self.params.U_bf)
 
         state = EnvState(u=u_S,
                          time=state.time + 1)
 
         done = self.is_terminal(state, params)
 
-        return lax.stop_gradient(self.get_obs(u_S)), lax.stop_gradient(u_S), reward, done, {"empty": None}
+        return lax.stop_gradient(self.get_obs(state)), lax.stop_gradient(state), reward, done, {"empty": None}
 
     def reset_env(self, key: chex.PRNGKey, params: EnvParams):
-        state_S = np.loadtxt('project_name/envs/u3.dat')
-        return self.get_obs(state_S), state_S
+        u_S = np.loadtxt('project_name/envs/u3.dat')
+        state = EnvState(u=u_S,
+                         time=0)  # TODO is this okay?
+        return self.get_obs(state), state
 
-    def get_obs(self, state_S: EnvState, params=None, key=None):  # TODO this in case of partial obserabilitiy
-        return jnp.float32(state_S[5::self.x_S.shape[0] // self.s_dim])
+    def get_obs(self, state_S: EnvState, params=None, key=None):  # TODO this in case of partial observability
+        return jnp.float32(state_S.u[5::self.x_S.shape[0] // self.s_dim])
 
     def is_terminal(self, state: EnvState, params: EnvParams):
         return False
@@ -134,12 +134,12 @@ class KS_JAX(environment.Environment[EnvState, EnvParams]):
 
     def action_space(self, params: Optional[EnvParams] = None) -> spaces.Box:
         """Action space of the environment."""
-        return spaces.Box(-self.params.A_MAX, self.params.A_MAX, (self.params.A_DIM,), dtype=jnp.float64)  # TODO 64 or 32 precision?
+        return spaces.Box(-self.params.A_MAX, self.params.A_MAX, self.params.A_DIM, dtype=jnp.float64)  # TODO 64 or 32 precision?
 
     def observation_space(self, params: EnvParams) -> spaces.Box:
         """Observation space of the environment."""
         high = 10  # TODO unsure of actual size should check
-        return spaces.Box(-high, high, (self.params.S_DIM,), dtype=jnp.float32)
+        return spaces.Box(-high, high, self.params.S_DIM, dtype=jnp.float32)
 
     # def state_space(self, params: EnvParams) -> spaces.Dict:
     #     """State space of the environment."""

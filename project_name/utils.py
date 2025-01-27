@@ -367,5 +367,17 @@ class Utils_KS(Utils_IMG):
         super().__init__(config)
 
     @staticmethod
+    def batchify_obs(x: dict, agent_list, num_agents, num_envs):
+        # obs = jnp.stack([x[a]["observation"] for a in agent_list]).reshape(
+        #     (num_agents, num_envs, *x[0]["observation"].shape[1:]))
+        # inv = jnp.stack([x[a]["inventory"] for a in agent_list]).reshape((num_agents, num_envs, -1))
+        # return (obs, inv)
+        inter = jnp.stack([x[a] for a in agent_list])
+        return inter.reshape((num_agents, num_envs, *inter.shape[2:]))
+
+    @staticmethod
     def observation_space(env, env_params):
         return env.observation_space(env_params).shape
+
+    def visitation(self, env_state, traj_batch, final_obs):
+        return None

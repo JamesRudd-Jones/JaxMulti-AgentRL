@@ -10,6 +10,8 @@ import jax.profiler
 def main(_):
     config = get_config()
 
+    # TODO remove action output of log prob and value, just store this in the mem state
+
     # TODO need to change update output to be for model info rather than env_state
 
     # TODO sort out running log_prob and value through act and put in mem state instead, ensure PPO and all still work okay
@@ -23,7 +25,7 @@ def main(_):
     wandb.init(project="ProbInfMarl",
         entity=config.WANDB_ENTITY,
         config=config,
-        group="coin-game_tests",
+        group="ks_tests",
         mode=config.WANDB
     )
 

@@ -18,7 +18,17 @@ from .deep_sea_wrapper import BsuiteToMARL
 import bsuite
 import jaxmarl
 from .envs.KS_JAX import KS_JAX
-from .envs.KS_JAX import EnvParams as KSParams
+
+
+"""
+M - Number of Meta Episodes
+E - Number of Episodes
+L - Episode Length
+G - Number of Agents
+N - Number of Envs
+O - Observation Dim
+A - Action Dim
+"""
 
 
 def run_train(config):
@@ -50,8 +60,8 @@ def run_train(config):
         env_params = CoinGameParams(payoff_matrix=[[1, 1, -2], [1, 1, -2]])
         utils = Utils_CG(config)
 
-        env = KS_JAX()
-        env_params = KSParams()
+        env = GymnaxToJaxMARL("KS_Equation", env=KS_JAX()) # TODO how to adjust default params for this step
+        env_params = env.default_params
         utils = Utils_KS(config)
 
     # key = jax.random.PRNGKey(config.SEED)
@@ -82,20 +92,21 @@ def run_train(config):
         train_state, mem_state = actor.initialise()
 
         reset_key = jrandom.split(key, config.NUM_ENVS)
-        obs, env_state = jax.vmap(env.reset, in_axes=(0, None), axis_name="batch_axis")(reset_key, env_params)
+        obs_NO, env_state = jax.vmap(env.reset, in_axes=(0, None), axis_name="batch_axis")(reset_key, env_params)
+        # TODO O may change above I guess
 
         runner_state = (
-            train_state, mem_state, env_state, obs, jnp.zeros((config.NUM_AGENTS, config.NUM_ENVS), dtype=bool), key)
+            train_state, mem_state, env_state, obs_NO, jnp.zeros((config.NUM_AGENTS, config.NUM_ENVS), dtype=bool), key)
 
         def _run_inner_update(update_runner_state, unused):
             runner_state, update_steps = update_runner_state
 
             def _run_episode_step(runner_state, unused):
                 # take initial env_state
-                train_state, mem_state, env_state, obs, last_done, key = runner_state
-                obs_batch = utils.batchify_obs(obs, range(config.NUM_AGENTS), config.NUM_AGENTS, config.NUM_ENVS)
+                train_state, mem_state, env_state, obs, last_done_GN, key = runner_state
+                obs_batch_GNO = utils.batchify_obs(obs, range(config.NUM_AGENTS), config.NUM_AGENTS, config.NUM_ENVS)
 
-                mem_state, action_n, log_prob_n, value_n, key = actor.act(train_state, mem_state, obs_batch, last_done,
+                mem_state, action_GNA, log_prob_GN, value_GN, key = actor.act(train_state, mem_state, obs_batch_GNO, last_done_GN,
                                                                           key)
 
                 # for not cnn
@@ -104,46 +115,45 @@ def run_train(config):
                 # env_act = jax.tree_map(lambda x: jnp.swapaxes(x, 0, 1), env_act)
 
                 # for cnn maybe
-                env_act = jnp.swapaxes(action_n, 0, 1)
+                env_act_NGA = jnp.swapaxes(action_GNA, 0, 1)
 
                 # step in env
                 key, _key = jrandom.split(key)
                 key_step = jrandom.split(_key, config.NUM_ENVS)
-                obs, env_state, reward, done, info = jax.vmap(env.step, in_axes=(0, 0, 0, None),
+                obs, env_state, reward, done_N, info = jax.vmap(env.step, in_axes=(0, 0, 0, None),
                                                               axis_name="batch_axis")(key_step,
                                                                                       env_state,
-                                                                                      env_act,
+                                                                                      env_act_NGA,
                                                                                       env_params
                                                                                       )
                 info = jax.tree_map(lambda x: jnp.swapaxes(jnp.tile(x[:, jnp.newaxis], (1, config.NUM_AGENTS)), 0, 1),
                                     info)  # TODO not sure if need this basically
-                done_batch = jnp.swapaxes(jnp.tile(done[:, jnp.newaxis], (1, config.NUM_AGENTS)), 0, 1)
-                reward_batch = utils.batchify(reward, range(config.NUM_AGENTS), config.NUM_AGENTS,
+                done_batch_GN = jnp.swapaxes(jnp.tile(done_N[:, jnp.newaxis], (1, config.NUM_AGENTS)), 0, 1)
+                reward_batch_GN = utils.batchify(reward, range(config.NUM_AGENTS), config.NUM_AGENTS,
                                               config["NUM_ENVS"]).squeeze(axis=-1)
+                nobs_batch_GNO = utils.batchify_obs(obs, range(config.NUM_AGENTS), config.NUM_AGENTS, config.NUM_ENVS)
 
-                nobs_batch = utils.batchify_obs(obs, range(config.NUM_AGENTS), config.NUM_AGENTS, config.NUM_ENVS)
-                # latent_sample, latent_mean, latent_log_var, encoder_hstate = the below maybe idk where better to put basos
                 mem_state = actor.update_encoding(train_state,
                                                   mem_state,
-                                                  nobs_batch,
-                                                  action_n,
-                                                  reward_batch,
-                                                  done_batch,
+                                                  nobs_batch_GNO,
+                                                  action_GNA,
+                                                  reward_batch_GN,
+                                                  done_batch_GN,
                                                   key)
 
-                transition = Transition(done_batch,
-                                        done_batch,
-                                        action_n,
-                                        value_n,
-                                        reward_batch,
-                                        log_prob_n,
-                                        obs_batch,
+                transition = Transition(done_batch_GN,
+                                        done_batch_GN,  # TODO why are there two done batches?
+                                        action_GNA,
+                                        value_GN,
+                                        reward_batch_GN,
+                                        log_prob_GN,
+                                        obs_batch_GNO,
                                         mem_state,
                                         # env_state,  # TODO have added for info purposes
                                         info,
                                         )
 
-                return (train_state, mem_state, env_state, obs, done_batch, key), transition
+                return (train_state, mem_state, env_state, obs, done_batch_GN, key), transition
 
             runner_state, trajectory_batch = jax.lax.scan(_run_episode_step, runner_state, None, config.NUM_INNER_STEPS)
             train_state, mem_state, env_state, obs, done, key = runner_state

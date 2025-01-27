@@ -14,9 +14,14 @@ class GymnaxToJaxMARL(object):
     agent = 0
     agents = [agent]
 
-    def __init__(self, env_name: str, env_kwargs: dict = {}):
+    def __init__(self, env_name: str, env_kwargs: dict = {}, env=None):
         self.env_name = env_name
-        self._env, self.env_params = gymnax.make(env_name, **env_kwargs)
+
+        if env is None:
+            self._env, self.env_params = gymnax.make(env_name, **env_kwargs)
+        else:
+            self._env = env
+            self.env_params = env.params
 
     @property
     def default_params(self):
