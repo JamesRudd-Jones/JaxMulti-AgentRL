@@ -1,1 +1,9 @@
-# prob_inf_marl
+# Jax Multi-Agent RL
+
+## Basic Usage
+
+## Installation
+
+## Contributing
+
+## Future Roadmap
