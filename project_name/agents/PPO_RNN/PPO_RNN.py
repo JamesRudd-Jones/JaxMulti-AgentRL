@@ -63,8 +63,8 @@ class PPO_RNNAgent(AgentBase):
                 MemoryState(hstate=self.init_hstate,
                             extras={
                                 "action_logits": jnp.zeros((self.config.NUM_ENVS, 1, self.env.action_space().n)),
-                                "values": jnp.zeros((self.config.NUM_ENVS, 1)),
-                                "log_probs": jnp.zeros((self.config.NUM_ENVS, 1)),
+                                "values": jnp.zeros(self.config.NUM_ENVS),
+                                "log_probs": jnp.zeros(self.config.NUM_ENVS),
                             }, ),
                 )
 
@@ -72,8 +72,8 @@ class PPO_RNNAgent(AgentBase):
     def reset_memory(self, mem_state):
         mem_state = mem_state._replace(extras={
             "action_logits": jnp.zeros((self.config.NUM_ENVS, 1, self.env.action_space().n)),
-            "values": jnp.zeros((self.config.NUM_ENVS, 1)),
-            "log_probs": jnp.zeros((self.config.NUM_ENVS, 1)),
+            "values": jnp.zeros(self.config.NUM_ENVS),
+            "log_probs": jnp.zeros(self.config.NUM_ENVS),
         },
             hstate=jnp.zeros((self.config.NUM_ENVS, self.agent_config.GRU_HIDDEN_DIM)),
         )
@@ -88,21 +88,17 @@ class PPO_RNNAgent(AgentBase):
 
         # sets shape as num_envs, 1 (idk what it is), the rest
         mem_state.extras["action_logits"] = jnp.swapaxes(action_logits, 0, 1)  # TODO check the right dimensions here
-        mem_state.extras["values"] = jnp.swapaxes(value, 0, 1)
-        mem_state.extras["log_probs"] = jnp.swapaxes(log_prob, 0, 1)  # TODO sort this out a bit
+        mem_state.extras["values"] = value.squeeze(0)
+        mem_state.extras["log_probs"] = log_prob.squeeze(0)
 
         mem_state = mem_state._replace(hstate=hstate, extras=mem_state.extras)
 
-        return mem_state, action, log_prob, value, key
+        return mem_state, action, key
 
     @partial(jax.jit, static_argnums=(0,))
     def update(self, runner_state, agent, traj_batch, all_mem_state):
         traj_batch = jax.tree_map(lambda x: x[:, agent], traj_batch)
-        # CALCULATE ADVANTAGE
         train_state, mem_state, env_state, ac_in, key = runner_state
-        # ac_in = (last_obs[jnp.newaxis, :],
-        #          last_done[jnp.newaxis, :],
-        #          )
         _, _, last_val, _ = train_state.apply_fn(train_state.params, mem_state.hstate, ac_in)
         last_val = last_val.squeeze(axis=0)
 
@@ -111,7 +107,7 @@ class PPO_RNNAgent(AgentBase):
                 gae, next_value = gae_and_next_value
                 done, value, reward = (
                     transition.global_done,
-                    transition.value,
+                    transition.mem_state.extras["values"],
                     transition.reward,
                 )
                 delta = reward + self.agent_config.GAMMA * next_value * (1 - done) - value
@@ -124,7 +120,7 @@ class PPO_RNNAgent(AgentBase):
                                          reverse=True,
                                          unroll=16,
                                          )
-            return advantages, advantages + traj_batch.value
+            return advantages, advantages + traj_batch.mem_state.extras["values"]
 
         advantages, targets = _calculate_gae(traj_batch, last_val)
 
@@ -144,15 +140,14 @@ class PPO_RNNAgent(AgentBase):
                     log_prob = pi.log_prob(traj_batch.action)
 
                     # CALCULATE VALUE LOSS
-                    value_pred_clipped = traj_batch.value + (value - traj_batch.value).clip(-self.agent_config.CLIP_EPS,
+                    value_pred_clipped = traj_batch.mem_state.extras["values"] + (value - traj_batch.mem_state.extras["values"]).clip(-self.agent_config.CLIP_EPS,
                                                                                             self.agent_config.CLIP_EPS)
                     value_losses = jnp.square(value - targets)
                     value_losses_clipped = jnp.square(value_pred_clipped - targets)
-                    value_loss = 0.5 * jnp.maximum(value_losses, value_losses_clipped).mean(
-                        where=(1 - traj_batch.done))
+                    value_loss = 0.5 * jnp.maximum(value_losses, value_losses_clipped).mean(where=(1 - traj_batch.done))
 
                     # CALCULATE ACTOR LOSS
-                    ratio = jnp.exp(log_prob - traj_batch.log_prob)
+                    ratio = jnp.exp(log_prob - traj_batch.mem_state.extras["log_probs"])
                     gae = (gae - gae.mean()) / (gae.std() + 1e-8)
                     loss_actor1 = ratio * gae
                     loss_actor2 = (jnp.clip(ratio,

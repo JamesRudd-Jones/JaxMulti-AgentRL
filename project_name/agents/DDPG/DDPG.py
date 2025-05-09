@@ -43,7 +43,7 @@ class DDPGAgent(AgentBase):
         self.env_params = env_params
         self.utils = utils
         self.critic_network = ContinuousRNNQNetwork(config=config)  # TODO separate RNN and normal
-        self.actor_network = DeterministicPolicy(env.action_space().shape, config=config,
+        self.actor_network = DeterministicPolicy(utils.action_space(env, env_params), config=config,
                                                  action_scale=self.agent_config.ACTION_SCALE)
 
         key, _key = jrandom.split(key)
@@ -51,12 +51,12 @@ class DDPGAgent(AgentBase):
 
         if self.config.CNN:
             init_x = ((jnp.zeros((1, config.NUM_ENVS, utils.observation_space(env, env_params))),
-                       (jnp.zeros((1, config.NUM_ENVS, env.action_space().shape)))),
+                       (jnp.zeros((1, config.NUM_ENVS, utils.action_space(env, env_params))))),
                       jnp.zeros((1, config.NUM_ENVS)),
                       )
         else:
             init_x = ((jnp.zeros((1, config.NUM_ENVS, utils.observation_space(env, env_params))),
-                       (jnp.zeros((1, config.NUM_ENVS, env.action_space().shape)))),
+                       (jnp.zeros((1, config.NUM_ENVS, utils.action_space(env, env_params))))),
                       jnp.zeros((1, config.NUM_ENVS)),
                       )
 
@@ -100,7 +100,7 @@ class DDPGAgent(AgentBase):
                 self.buffer.init(
                     TransitionDDPG(done=jnp.zeros((self.config.NUM_ENVS), dtype=bool),
                                   action=jnp.zeros((self.config.NUM_ENVS,
-                                                    self.env.action_space().shape), dtype=jnp.float64),
+                                                    self.utils.action_space(self.env, self.env_params))),
                                   reward=jnp.zeros((self.config.NUM_ENVS)),
                                   obs=jnp.zeros((self.config.NUM_ENVS,
                                                  self.utils.observation_space(self.env, self.env_params)),
@@ -117,16 +117,13 @@ class DDPGAgent(AgentBase):
         _, action = train_state.actor_state.apply_fn(train_state.actor_state.params, ac_in)  # TODO no rnn for now
         key, _key = jrandom.split(key)
         action += jnp.clip(jrandom.normal(_key, action.shape) * self.agent_config.ACTION_SCALE * self.agent_config.EXPLORATION_NOISE,
-                           -self.env.env_params.A_MAX, self.env.env_params.A_MAX)
+                           -self.env.env_params.max_action, self.env.env_params.max_action)
 
-        log_prob = jnp.zeros((*action.shape[:2],))
-        value = jnp.zeros((*action.shape[:2],))  # TODO sort these out, is this same dim number as num envs, do I need this or does it just go in mem state?
-
-        return mem_state, action, log_prob, value, key
+        return mem_state, action, key
 
     @partial(jax.jit, static_argnums=(0,))
     def update(self, runner_state, agent, traj_batch, unused_2):
-        traj_batch = jax.tree_map(lambda x: x[:, agent], traj_batch)
+        traj_batch = jax.tree_util.tree_map(lambda x: x[:, agent], traj_batch)
 
         train_state, mem_state, env_state, ac_in, key = runner_state
 
@@ -148,7 +145,7 @@ class DDPGAgent(AgentBase):
             ndone = batch.experience.second.done
 
             _, action_pred = train_state.actor_state.apply_fn(actor_target_params, (nobs, ndone))
-            action_pred = jnp.clip(action_pred, -self.env.env_params.A_MAX, self.env.env_params.A_MAX)
+            action_pred = jnp.clip(action_pred, -self.env.env_params.max_action, self.env.env_params.max_action)
             _, target_val = train_state.critic_state.apply_fn(critic_target_params, None, ((nobs, action_pred), ndone))
 
             y_expected = reward + (1 - done) * self.agent_config.GAMMA * jnp.squeeze(target_val, axis=-1)  # TODO do I need stop gradient?

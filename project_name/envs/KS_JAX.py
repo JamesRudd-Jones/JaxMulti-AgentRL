@@ -8,7 +8,7 @@ from jax import lax
 from typing import Optional
 import jax
 
-jax.config.update("jax_enable_x64", True)  # TODO unsure if need or not but will check results
+# jax.config.update("jax_enable_x64", True)  # TODO unsure if need or not but will check results
 
 
 """
@@ -32,7 +32,7 @@ class EnvState(environment.EnvState):
 class EnvParams(environment.EnvParams):  # TODO sort this out at some point to match gymnax style
     S_DIM: int = 8
     A_DIM: int = 4
-    A_MAX: int = 1
+    max_action: int = 1
     L: int = 22
     dt: float = 0.05
     x: np.ndarray = np.loadtxt('project_name/envs/x.dat')  # select space discretization of the target solution
@@ -134,12 +134,12 @@ class KS_JAX(environment.Environment[EnvState, EnvParams]):
 
     def action_space(self, params: Optional[EnvParams] = None) -> spaces.Box:
         """Action space of the environment."""
-        return spaces.Box(-self.params.A_MAX, self.params.A_MAX, self.params.A_DIM, dtype=jnp.float64)  # TODO 64 or 32 precision?
+        return spaces.Box(-self.params.max_action, self.params.max_action, (self.params.A_DIM, ), dtype=jnp.float64)  # TODO 64 or 32 precision?
 
     def observation_space(self, params: EnvParams) -> spaces.Box:
         """Observation space of the environment."""
         high = 10  # TODO unsure of actual size should check
-        return spaces.Box(-high, high, self.params.S_DIM, dtype=jnp.float32)
+        return spaces.Box(-high, high, (self.params.S_DIM, ), dtype=jnp.float64)
 
     # def state_space(self, params: EnvParams) -> spaces.Dict:
     #     """State space of the environment."""
@@ -170,7 +170,7 @@ if __name__ == "__main__":
     MAX_TOTAL_REWARD = -16.5  # critic reward to Failure
     S_DIM = 8  # number of equispaced sensors
     A_DIM = 4  # number of equispaced actuators
-    A_MAX = 1  # maximum amplitude for the actuation [-A_MAX, A_MAX]
+    max_action = 1  # maximum amplitude for the actuation [-max_action, max_action]
 
     ks = KS_JAX(L=22, N=x.size, a_dim=A_DIM, s_dim=S_DIM)  # Kuramoto-Sivashinsky class initialization
 

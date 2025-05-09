@@ -9,21 +9,26 @@ authors = [
 dependencies = [
     "absl-py>=2.1.0",
     "rlax==0.1.2",
-    "stable-baselines3==2.0.0a1",
-    "gymnasium[accept-rom-license,atari,other]==0.28.1",
-    "flax>=0.7.4",
+#    "stable-baselines3==2.0.0a1",
+#    "gymnasium[accept-rom-license,atari,other]==0.28.1",
+#    "flax>=0.7.4",
     "optax>=0.2.2",
     "wandb>=0.17.1",
-    "ale-py>=0.8.1",
-    "dm-haiku>=0.0.12",
+#    "ale-py>=0.8.1",
+#    "dm-haiku>=0.0.12",
     "bsuite>=0.3.5",
-    "scipy==1.8.0",
+#    "scipy==1.8.0",
     "flashbax>=0.1.2",
     "lxm3==0.4.2",
-    "tensorflow[and-cuda]>=2.17.0",
+#    "tensorflow[and-cuda]>=2.17.0",
     "gymnax>=0.0.8",
     "jaxmarl>=0.0.2",
-    "jax[cuda12_pip]>=0.4.18",
+    "pygame>=2.6.1",
+#    "jax[cuda12_pip]>=0.4.18",
+#    "jax[cpu]==0.4.23",
+#    "jax==0.5.0",
+    "jax==0.6.0",
+    "flax==0.10.6",
 ]
 requires-python = "==3.10.*"
 readme = "README.md"
@@ -39,13 +44,13 @@ build-backend = "pdm.backend"
  verify_ssl = true
  type = "find_links"
 
-                                          [tool.pdm.scripts]
+                                               [tool.pdm.scripts]
 test.cmd = "pytest -n auto --maxprocesses 8 --dist loadfile"
 # test.env = { JAX_PLATFORM_NAME = "cpu", JAX_DISABLE_MOST_OPTIMIZATIONS = "1" }
 lint.shell = "ruff . && black --check ."
 fmt.shell = "ruff --fix . && black ."
 
-                                          [tool.pdm.dev-dependencies]
+                                               [tool.pdm.dev-dependencies]
 dev = [
     "lxm3>=0.4.0",
     "ruff>=0.1.11",

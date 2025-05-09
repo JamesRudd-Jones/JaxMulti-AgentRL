@@ -1,113 +1,50 @@
 import jax.numpy as jnp
 import jax
 import jax.random as jrandom
-from project_name.config import get_config  # TODO dodge need to know how to fix this
 import wandb
+from project_name.config import get_config  # TODO dodge need to know how to fix this
 import gymnax
 from typing import NamedTuple
 import chex
-from .pax.envs.in_the_matrix import InTheMatrix, EnvParams as MatrixEnvParams
-from .pax.envs.iterated_matrix_game import IteratedMatrixGame, EnvParams
-from .pax.envs.coin_game import CoinGame
-from .pax.envs.coin_game import EnvParams as CoinGameParams
-from .agents import Agent, MultiAgent
-from .utils import Transition, EvalTransition, Utils_IMG, Utils_IMPITM, Utils_CG, Utils_DEEPSEA, Utils_KS
 import sys
-from .gymnax_jaxmarl_wrapper import GymnaxToJaxMARL
-from .deep_sea_wrapper import BsuiteToMARL
-import bsuite
+
+# import bsuite
 import jaxmarl
+
 from .envs.KS_JAX import KS_JAX
+from .envs.SailingEnv import SailingEnv
+from .envs.env_wrappers import GymnaxToJaxMARL, NormalisedEnv
+# from .deep_sea_wrapper import BsuiteToMARL
+# from .pax.envs.in_the_matrix import InTheMatrix, EnvParams as MatrixEnvParams
+# from .pax.envs.iterated_matrix_game import IteratedMatrixGame, EnvParams
+# from .pax.envs.coin_game import CoinGame
+# from .pax.envs.coin_game import EnvParams as CoinGameParams
+from .agents import SingleAgent, MultiAgent
+from .utils import Transition, EvalTransition, Utils_IMG, Utils_IMPITM, Utils_CG, Utils_DEEPSEA, Utils_KS
 
 
-"""
-M - Number of Meta Episodes
-E - Number of Episodes
-L - Episode Length
-G - Number of Agents
-N - Number of Envs
-O - Observation Dim
-A - Action Dim
-"""
-
-
-def run_train(config):
-    if config.CNN:
-        payoff = jnp.array([[[3, 0], [5, 1]], [[3, 5], [0, 1]]])
-        env = InTheMatrix(num_inner_steps=config.NUM_INNER_STEPS, num_outer_steps=config.NUM_META_STEPS,
-                          fixed_coin_location=False)
-        env_params = MatrixEnvParams(payoff_matrix=payoff, freeze_penalty=5)
-        utils = Utils_IMPITM(config)
-
-        env = GymnaxToJaxMARL("DeepSea-bsuite", {"size": config.NUM_INNER_STEPS,
-                                                 "sample_action_map": False})
-        # check have updated the gymnax deep sea to the github change
-        env_params = env.default_params
-        utils = Utils_DEEPSEA(config)
-
-        # env = bsuite.load_from_id(bsuite_id="deep_sea/1")
-        # env = BsuiteToMARL("deep_sea/1")
-
-    else:
-        payoff = [[3, 3], [1, 4], [4, 1], [2, 2]]  # [[-1, -1], [-3, 0], [0, -3], [-2, -2]]  # payoff matrix for the IPD
-        env = IteratedMatrixGame(num_inner_steps=config.NUM_INNER_STEPS, num_outer_steps=config.NUM_META_STEPS)
-        env_params = EnvParams(payoff_matrix=payoff)
-        utils = Utils_IMG(config)
-        # TODO the above game has issues with when it ends? causing loss spikes it seems
-
-        env = CoinGame(num_inner_steps=config.NUM_INNER_STEPS, num_outer_steps=config.NUM_META_STEPS,
-                       cnn=False, egocentric=False)
-        env_params = CoinGameParams(payoff_matrix=[[1, 1, -2], [1, 1, -2]])
-        utils = Utils_CG(config)
-
-        env = GymnaxToJaxMARL("KS_Equation", env=KS_JAX()) # TODO how to adjust default params for this step
-        env_params = env.default_params
-        utils = Utils_KS(config)
-
-    # key = jax.random.PRNGKey(config.SEED)
-    #
-    # if config.NUM_AGENTS == 1:
-    #     actor = Agent(env=env, env_params=env_params, config=config, utils=utils, key=key)
-    # else:
-    #     actor = MultiAgent(env=env, env_params=env_params, config=config, utils=utils, key=key)
-    #
-    # for agent in range(config.NUM_AGENTS):
-    #     config[f"{actor.agent_types[agent]}_config"] = actor.agent_list[agent].agent_config()
-    #
-    # wandb.init(project="ProbInfMarl",
-    #            entity=config.WANDB_ENTITY,
-    #            config=config,
-    #            group="coin-game_tests",
-    #            mode=config.WANDB
-    #            )
-    # TODO sort out the above
-
+def run_train(config, actor, env, env_params, utils):
     def train():
-        key = jax.random.PRNGKey(config.SEED)
+        key = jrandom.PRNGKey(config.SEED)
 
-        if config.NUM_AGENTS == 1:
-            actor = Agent(env=env, env_params=env_params, config=config, utils=utils, key=key)
-        else:
-            actor = MultiAgent(env=env, env_params=env_params, config=config, utils=utils, key=key)
         train_state, mem_state = actor.initialise()
 
-        reset_key = jrandom.split(key, config.NUM_ENVS)
+        key, _key = jrandom.split(key)
+        reset_key = jrandom.split(_key, config.NUM_ENVS)
         obs_NO, env_state = jax.vmap(env.reset, in_axes=(0, None), axis_name="batch_axis")(reset_key, env_params)
-        # TODO O may change above I guess
 
-        runner_state = (
-            train_state, mem_state, env_state, obs_NO, jnp.zeros((config.NUM_AGENTS, config.NUM_ENVS), dtype=bool), key)
+        runner_state = (train_state, mem_state, env_state, obs_NO,
+                        jnp.zeros((config.NUM_AGENTS, config.NUM_ENVS), dtype=bool), key)
 
         def _run_inner_update(update_runner_state, unused):
             runner_state, update_steps = update_runner_state
 
             def _run_episode_step(runner_state, unused):
-                # take initial env_state
                 train_state, mem_state, env_state, obs, last_done_GN, key = runner_state
                 obs_batch_GNO = utils.batchify_obs(obs, range(config.NUM_AGENTS), config.NUM_AGENTS, config.NUM_ENVS)
 
-                mem_state, action_GNA, log_prob_GN, value_GN, key = actor.act(train_state, mem_state, obs_batch_GNO, last_done_GN,
-                                                                          key)
+                key, _key = jrandom.split(key)
+                mem_state, action_GNA, key = actor.act(train_state, mem_state, obs_batch_GNO, last_done_GN, _key)
 
                 # for not cnn
                 # env_act = utils.unbatchify(action_n, range(config.NUM_AGENTS), config.NUM_AGENTS, config["NUM_DEVICES"])
@@ -126,7 +63,9 @@ def run_train(config):
                                                                                       env_act_NGA,
                                                                                       env_params
                                                                                       )
-                info = jax.tree_map(lambda x: jnp.swapaxes(jnp.tile(x[:, jnp.newaxis], (1, config.NUM_AGENTS)), 0, 1),
+                info = jax.tree_util.tree_map(lambda x: jnp.swapaxes(jnp.tile(x[:, jnp.newaxis],
+                                                                              (1, config.NUM_AGENTS)),
+                                                                     0, 1),
                                     info)  # TODO not sure if need this basically
                 done_batch_GN = jnp.swapaxes(jnp.tile(done_N[:, jnp.newaxis], (1, config.NUM_AGENTS)), 0, 1)
                 reward_batch_GN = utils.batchify(reward, range(config.NUM_AGENTS), config.NUM_AGENTS,
@@ -144,9 +83,7 @@ def run_train(config):
                 transition = Transition(done_batch_GN,
                                         done_batch_GN,  # TODO why are there two done batches?
                                         action_GNA,
-                                        value_GN,
                                         reward_batch_GN,
-                                        log_prob_GN,
                                         obs_batch_GNO,
                                         mem_state,
                                         # env_state,  # TODO have added for info purposes
@@ -260,6 +197,31 @@ def run_train(config):
         return {"runner_state": runner_state, "metrics": metric}
 
     return train
+
+
+def run_eval(config, actor, env, env_params, utils, train_state, mem_state):
+    key = jrandom.PRNGKey(config.SEED)
+
+    key, _key = jrandom.split(key)
+    obs_O, env_state = env.reset(_key, env_params)
+    done = False
+
+    for _ in range(config.NUM_EVAL_STEPS):
+        obs_10 = jax.tree_util.tree_map(lambda x: jnp.expand_dims(x, axis=0), obs_O)
+        # TODO a quick fix for the batchify_obs feature
+        obs_batch_GO = utils.batchify_obs(obs_10, range(config.NUM_AGENTS), config.NUM_AGENTS, 1).squeeze(0)
+
+        key, _key = jrandom.split(key)
+        mem_state, action_GA, key = actor.act(train_state, mem_state, obs_batch_GO, done, _key)
+
+        # for cnn maybe
+        env_act_GA = action_GA
+
+        # step in env
+        key, _key = jrandom.split(key)
+        obs, env_state, reward, done, info = env.step(_key, env_state, env_act_GA, env_params)
+
+        env.render(env_state, env_params)
 
 
 if __name__ == "__main__":

@@ -22,9 +22,7 @@ class Transition(NamedTuple):
     global_done: jnp.ndarray
     done: jnp.ndarray
     action: jnp.ndarray
-    value: jnp.ndarray
     reward: jnp.ndarray
-    log_prob: jnp.ndarray
     obs: jnp.ndarray
     mem_state: MemoryState
     # env_state: Any  # TODO added this but can change
@@ -376,8 +374,12 @@ class Utils_KS(Utils_IMG):
         return inter.reshape((num_agents, num_envs, *inter.shape[2:]))
 
     @staticmethod
+    def action_space(env, env_params):
+        return env.action_space().shape[0]
+
+    @staticmethod
     def observation_space(env, env_params):
-        return env.observation_space(env_params).shape
+        return env.observation_space(env_params).shape[0]
 
     def visitation(self, env_state, traj_batch, final_obs):
         return None

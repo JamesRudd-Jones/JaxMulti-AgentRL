@@ -1,14 +1,14 @@
 import jax
 import jax.numpy as jnp
 import jax.random as jrandom
-from project_name.agents.agent_main import Agent
+from project_name.agents import SingleAgent
 import sys
 from ..utils import import_class_from_folder
 from functools import partial
 from typing import Any
 
 
-class MultiAgent(Agent):
+class MultiAgent(SingleAgent):
     def __init__(self, env, env_params, config, utils, key):
         super().__init__(env, env_params, config, utils, key)
         self.agent_list = {agent: None for agent in range(config.NUM_AGENTS)}  # TODO is there a better way to do this?
@@ -30,20 +30,14 @@ class MultiAgent(Agent):
     @partial(jax.jit, static_argnums=(0,))
     def act(self, train_state: Any, mem_state: Any, obs_batch: Any, last_done: Any, key: Any):  # TODO add better chex
         action_n = jnp.zeros((self.config.NUM_AGENTS, self.config["NUM_ENVS"]), dtype=jnp.int32)
-        value_n = jnp.zeros((self.config.NUM_AGENTS, self.config["NUM_ENVS"]))
-        log_prob_n = jnp.zeros((self.config.NUM_AGENTS, self.config["NUM_ENVS"]))
         for agent in range(self.config.NUM_AGENTS):
             ac_in = self.utils.ac_in(obs_batch, last_done, agent)  # TODO is this dodge?
 
-            ind_mem_state, ind_action, ind_log_prob, ind_value, key = self.agent_list[agent].act(train_state[agent],
-                                                                                                 mem_state[agent],
-                                                                                                 ac_in, key)
+            ind_mem_state, ind_action, key = self.agent_list[agent].act(train_state[agent], mem_state[agent], ac_in, key)
             action_n = action_n.at[agent].set(ind_action[0])
-            value_n = value_n.at[agent].set(ind_value[0])
-            log_prob_n = log_prob_n.at[agent].set(ind_log_prob[0])
             mem_state[agent] = ind_mem_state
 
-        return mem_state, action_n, log_prob_n, value_n, key
+        return mem_state, action_n, key
 
     @partial(jax.jit, static_argnums=(0,))
     def update_encoding(self, train_state: Any, mem_state: Any, obs_batch: Any, action: Any, reward: Any, done: Any, key):
@@ -81,7 +75,7 @@ class MultiAgent(Agent):
                trajectory_batch: Any):
         info_all = {agent: None for agent in range(self.config.NUM_AGENTS)}
         for agent in range(self.config.NUM_AGENTS):  # TODO this is probs mega slowsies
-            new_mem_state = jax.tree_map(lambda x: jnp.expand_dims(x, axis=1), trajectory_batch.mem_state[agent])
+            new_mem_state = jax.tree_util.tree_map(lambda x: jnp.expand_dims(x, axis=1), trajectory_batch.mem_state[agent])
             individual_trajectory_batch = trajectory_batch._replace(mem_state=new_mem_state)  # TODO check this is fine
             # individual_trajectory_batch = jax.tree_map(lambda x: x[:, agent], individual_trajectory_batch)
             ac_in = self.utils.ac_in(last_obs_batch, last_done, agent)  # TODO is this dodge?
@@ -101,7 +95,7 @@ class MultiAgent(Agent):
                     key: Any, trajectory_batch: Any):  # TODO add better chex
         info_all = {agent: None for agent in range(self.config.NUM_AGENTS)}
         for agent in range(self.config.NUM_AGENTS):  # TODO this is probs mega slowsies
-            new_mem_state = jax.tree_map(lambda x: jnp.expand_dims(x, axis=1), trajectory_batch.mem_state[agent])
+            new_mem_state = jax.tree_util.tree_map(lambda x: jnp.expand_dims(x, axis=1), trajectory_batch.mem_state[agent])
             individual_trajectory_batch = trajectory_batch._replace(mem_state=new_mem_state)  # TODO check this is fine
             # individual_trajectory_batch = jax.tree_map(lambda x: x[:, agent], individual_trajectory_batch)
             ac_in = self.utils.ac_in(last_obs_batch, last_done, agent)  # TODO is this dodge?

@@ -10,7 +10,7 @@ from flax.training.train_state import TrainState
 
 
 # initialise agents from the config file deciding what the algorithms are
-class Agent:
+class SingleAgent:
     def __init__(self, env, env_params, config, utils, key: chex.PRNGKey):  # TODO add better chex
         self.env = env
         self.config = config
@@ -24,12 +24,12 @@ class Agent:
         return self.train_state, self.mem_state
 
     @partial(jax.jit, static_argnums=(0,))
-    def act(self, train_state: Any, mem_state: chex.Array, obs_batch: Dict[str, chex.Array], last_done: chex.Array, key: chex.PRNGKey) -> Tuple[chex.Array, chex.Array, chex.Array, chex.Array, chex.PRNGKey]:  # TODO add better chex fo trainstate
+    def act(self, train_state: Any, mem_state: chex.Array, obs_batch: Dict[str, chex.Array], last_done: chex.Array, key: chex.PRNGKey) -> Tuple[chex.Array, chex.Array, chex.PRNGKey]:  # TODO add better chex fo trainstate
         ac_in = (obs_batch,
                  last_done,
                  )
-        mem_state, action, log_prob, value, key = self.agent.act(train_state, mem_state, ac_in, key)
-        return mem_state, action, log_prob, value, key
+        mem_state, action, key = self.agent.act(train_state, mem_state, ac_in, key)
+        return mem_state, action, key
 
     @partial(jax.jit, static_argnums=(0,))
     def update_encoding(self, train_state: Any, mem_state: Any, obs_batch: Any, action: Any, reward: Any, done: Any, key):
@@ -48,7 +48,7 @@ class Agent:
     def update(self, train_state: Any, mem_state: Any, env_state: Any, last_obs_batch: Any, last_done: Any, key: Any,
                trajectory_batch: Any):  # TODO add better chex
         info_all = {agent: None for agent in range(self.config.NUM_AGENTS)}
-        new_mem_state = jax.tree_map(lambda x: jnp.expand_dims(x, axis=1), trajectory_batch.mem_state)
+        new_mem_state = jax.tree_util.tree_map(lambda x: jnp.expand_dims(x, axis=1), trajectory_batch.mem_state)
         trajectory_batch = trajectory_batch._replace(mem_state=new_mem_state)  # TODO check this is fine
         ac_in = (last_obs_batch, last_done)
         train_state = (train_state, mem_state, env_state, ac_in, key)
@@ -61,7 +61,7 @@ class Agent:
     def meta_update(self, train_state: Any, mem_state: Any, env_state: Any, last_obs_batch: Any, last_done: Any, key: Any,
                trajectory_batch: Any):  # TODO add better chex
         info_all = {agent: None for agent in range(self.config.NUM_AGENTS)}
-        new_mem_state = jax.tree_map(lambda x: jnp.expand_dims(x, axis=1), trajectory_batch.mem_state)
+        new_mem_state = jax.tree_util.tree_map(lambda x: jnp.expand_dims(x, axis=1), trajectory_batch.mem_state)
         trajectory_batch = trajectory_batch._replace(mem_state=new_mem_state)  # TODO check this is fine
         ac_in = (last_obs_batch, last_done)
         train_state = (train_state, mem_state, env_state, ac_in, key)
