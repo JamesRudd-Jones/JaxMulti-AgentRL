@@ -38,7 +38,7 @@ class IDQNAgent(AgentBase):
         self.env = env
         self.env_params = env_params
         self.utils = utils
-        self.network = RNNQNetwork(env.action_space().n, config=config)  # TODO separate RNN and normal
+        self.network = RNNQNetwork(utils.action_space(env, env_params), config=config)  # TODO separate RNN and normal
 
         key, _key = jrandom.split(key)
         init_hstate = ScannedRNN.initialize_carry(config.NUM_ENVS, self.agent_config.GRU_HIDDEN_DIM)
@@ -143,10 +143,7 @@ class IDQNAgent(AgentBase):
         valid_actions = jnp.ones_like(q_vals)
         action = self._eps_greedy_exploration(key, q_vals, eps, valid_actions)
 
-        log_prob = jnp.zeros((1,))
-        value = jnp.zeros((1,))  # TODO sort these out
-
-        return mem_state, action, log_prob, value, key
+        return mem_state, action, key
 
     @partial(jax.jit, static_argnums=(0,))
     def update(self, runner_state, agent, traj_batch, unused_2):

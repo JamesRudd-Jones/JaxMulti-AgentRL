@@ -383,3 +383,15 @@ class Utils_KS(Utils_IMG):
 
     def visitation(self, env_state, traj_batch, final_obs):
         return None
+
+class Utils_LM(Utils_KS):
+    def __init__(self, config):
+        super().__init__(config)
+
+    @staticmethod
+    def observation_space(env, env_params):
+        return env.observation_space(env_params).shape[0]
+
+    @staticmethod
+    def action_space(env, env_params):
+        return env.action_space(env_params).n

@@ -3,23 +3,6 @@ import jax
 import jax.random as jrandom
 import wandb
 from project_name.config import get_config  # TODO dodge need to know how to fix this
-import gymnax
-from typing import NamedTuple
-import chex
-import sys
-
-# import bsuite
-import jaxmarl
-
-from .envs.KS_JAX import KS_JAX
-from .envs.SailingEnv import SailingEnv
-from .envs.env_wrappers import GymnaxToJaxMARL, NormalisedEnv
-# from .deep_sea_wrapper import BsuiteToMARL
-# from .pax.envs.in_the_matrix import InTheMatrix, EnvParams as MatrixEnvParams
-# from .pax.envs.iterated_matrix_game import IteratedMatrixGame, EnvParams
-# from .pax.envs.coin_game import CoinGame
-# from .pax.envs.coin_game import EnvParams as CoinGameParams
-from .agents import SingleAgent, MultiAgent
 from .utils import Transition, EvalTransition, Utils_IMG, Utils_IMPITM, Utils_CG, Utils_DEEPSEA, Utils_KS
 
 
@@ -45,11 +28,6 @@ def run_train(config, actor, env, env_params, utils):
 
                 key, _key = jrandom.split(key)
                 mem_state, action_GNA, key = actor.act(train_state, mem_state, obs_batch_GNO, last_done_GN, _key)
-
-                # for not cnn
-                # env_act = utils.unbatchify(action_n, range(config.NUM_AGENTS), config.NUM_AGENTS, config["NUM_DEVICES"])
-                # env_act = {k: v for k, v in env_act.items()}
-                # env_act = jax.tree_map(lambda x: jnp.swapaxes(x, 0, 1), env_act)
 
                 # for cnn maybe
                 env_act_NGA = jnp.swapaxes(action_GNA, 0, 1)
@@ -95,8 +73,6 @@ def run_train(config, actor, env, env_params, utils):
             runner_state, trajectory_batch = jax.lax.scan(_run_episode_step, runner_state, None, config.NUM_INNER_STEPS)
             train_state, mem_state, env_state, obs, done, key = runner_state
 
-            mem_state = actor.meta_act(mem_state)  # meta acts if using a meta agent, otherwise does nothing
-
             last_obs_batch = utils.batchify_obs(obs, range(config.NUM_AGENTS), config.NUM_AGENTS, config.NUM_ENVS)
             train_state, mem_state, env_state, last_obs_batch, done, agent_info, key = actor.update(train_state,
                                                                                                     mem_state,
@@ -106,48 +82,9 @@ def run_train(config, actor, env, env_params, utils):
                                                                                                     key,
                                                                                                     trajectory_batch)
 
-            # update_steps = update_steps + 1
-
-            return ((train_state, mem_state, env_state, obs, done, key), update_steps), (trajectory_batch, agent_info)
-
-        def _run_meta_update(meta_runner_state, unused):
-            (train_state, mem_state, env_state, obs, last_done, key), update_steps = meta_runner_state
-
-            # reset env here actually I think
-            # TODO this feels dodgy re ending of episodes in trajectories etc but seems what they have done
-            key, _key = jrandom.split(key)
-            reset_key = jrandom.split(_key, config.NUM_ENVS)
-            obs, env_state = jax.vmap(env.reset, in_axes=(0, None), axis_name="batch_axis")(reset_key, env_params)
-
-            # reset agents memory apparently as well, do I need this?
-            mem_state = actor.reset_memory(mem_state)
-
-            runner_state = (train_state, mem_state, env_state, obs,
-                            jnp.zeros((config.NUM_AGENTS, config.NUM_ENVS), dtype=bool), key)
-
-            update_state, (meta_trajectory_batch, agent_info) = jax.lax.scan(_run_inner_update,
-                                                               (runner_state, update_steps),
-                                                               None,
-                                                               config.NUM_META_STEPS)
-            collapsed_trajectory_batch = jax.tree_util.tree_map(
-                lambda x: jnp.reshape(x,
-                                      [config.NUM_META_STEPS * config.NUM_INNER_STEPS, ] + list(x.shape[2:])),
-                meta_trajectory_batch)
-
-            runner_state, update_steps = update_state
-            train_state, mem_state, env_state, obs, done, key = runner_state
-
-            last_obs_batch = utils.batchify_obs(obs, range(config.NUM_AGENTS), config.NUM_AGENTS, config.NUM_ENVS)
-            train_state, mem_state, env_state, last_obs_batch, done, meta_agent_info, key = actor.meta_update(train_state,
-                                                                                                         mem_state,
-                                                                                                         env_state,
-                                                                                                         last_obs_batch,
-                                                                                                         done, key,
-                                                                                                         collapsed_trajectory_batch)
-
-            def callback(traj_batch, env_stats, agent_info, meta_agent_info, update_steps):
+            def callback(traj_batch, env_stats, agent_info, update_steps):
                 metric_dict = {  # "env_step": update_steps * config.NUM_ENVS * config.NUM_INNER_STEPS,
-                                "env_stats": env_stats
+                    "env_stats": env_stats
                 }
 
                 # TODO below must be sooo slow but maybe it works fine?
@@ -165,34 +102,26 @@ def run_train(config, actor, env, env_params, utils):
                                 # step_metric_dict[f"{agent}_{idx}-{item}"] = agent_info[idx][item][step_idx]
                     wandb.log(step_metric_dict)
 
-                for idx, agent in enumerate(config.AGENT_TYPE):
-                    if agent == "MFOS":  # TODO update if get more meta agents
-                        for item in meta_agent_info[idx]:
-                            metric_dict[f"{agent}-{item}"] = meta_agent_info[idx][item]
-                            # metric_dict[f"{agent}_{idx}-{item}"] = meta_agent_info[idx][item]
-                # TODO have removed the idx from wandb
-
                 metric_dict["env_step"] = (update_steps + 1) * config.NUM_META_STEPS
 
                 wandb.log(metric_dict)
 
             env_stats = jax.tree_util.tree_map(lambda x: x.mean(), utils.visitation(env_state,
-                                                                                    collapsed_trajectory_batch,
+                                                                                    trajectory_batch,
                                                                                     obs))
             # env_stats = env_state
             # TODO remove these stats if not using them and replace with deepsea stats somehow
 
-            jax.experimental.io_callback(callback, None, meta_trajectory_batch,
-                                         env_stats, agent_info, meta_agent_info, update_steps)
+            # jax.experimental.io_callback(callback, None, trajectory_batch,
+            #                              env_stats, agent_info, update_steps)
 
-            metric = collapsed_trajectory_batch.info
+            metric = trajectory_batch.info
 
             update_steps += 1
 
-            return ((train_state, mem_state, env_state, obs, done, key), update_steps), metric
+            return ((train_state, mem_state, env_state, obs, done, key), update_steps), (trajectory_batch, agent_info)
 
-        # meta training is same between, just set =1 for no meta loops, I think?
-        runner_state, metric = jax.lax.scan(_run_meta_update, (runner_state, 0), None, config.NUM_UPDATES)
+        runner_state, metric = jax.lax.scan(_run_inner_update, (runner_state, 0), None, config.NUM_UPDATES)
 
         return {"runner_state": runner_state, "metrics": metric}
 

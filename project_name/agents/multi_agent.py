@@ -57,13 +57,6 @@ class MultiAgent(SingleAgent):
         return mem_state
 
     @partial(jax.jit, static_argnums=(0,))
-    def meta_act(self, mem_state: Any):
-        for agent in range(self.config.NUM_AGENTS):
-            mem_state[agent] = self.agent_list[agent].meta_policy(mem_state[agent])
-
-        return mem_state
-
-    @partial(jax.jit, static_argnums=(0,))
     def reset_memory(self, mem_state: Any):
         for agent in range(self.config.NUM_AGENTS):
             mem_state[agent] = self.agent_list[agent].reset_memory(mem_state[agent])
@@ -83,26 +76,6 @@ class MultiAgent(SingleAgent):
             individual_runner_list = self.agent_list[agent].update(individual_train_state, agent,
                                                                    individual_trajectory_batch,
                                                                    trajectory_batch.mem_state)  # TODO have added in mem_state for all if needed
-            train_state[agent] = individual_runner_list[0]
-            mem_state[agent] = individual_runner_list[1]
-            info_all[agent] = individual_runner_list[-2]
-            key = individual_runner_list[-1]
-
-        return train_state, mem_state, env_state, last_obs_batch, last_done, info_all, key
-
-    @partial(jax.jit, static_argnums=(0,))  # TODO dodgy code is there a way to do better here
-    def meta_update(self, train_state: Any, mem_state: Any, env_state: Any, last_obs_batch: Any, last_done: Any,
-                    key: Any, trajectory_batch: Any):  # TODO add better chex
-        info_all = {agent: None for agent in range(self.config.NUM_AGENTS)}
-        for agent in range(self.config.NUM_AGENTS):  # TODO this is probs mega slowsies
-            new_mem_state = jax.tree_util.tree_map(lambda x: jnp.expand_dims(x, axis=1), trajectory_batch.mem_state[agent])
-            individual_trajectory_batch = trajectory_batch._replace(mem_state=new_mem_state)  # TODO check this is fine
-            # individual_trajectory_batch = jax.tree_map(lambda x: x[:, agent], individual_trajectory_batch)
-            ac_in = self.utils.ac_in(last_obs_batch, last_done, agent)  # TODO is this dodge?
-            individual_train_state = (train_state[agent], mem_state[agent], env_state, ac_in, key)
-            individual_runner_list = self.agent_list[agent].meta_update(individual_train_state,
-                                                                        agent,
-                                                                        individual_trajectory_batch)
             train_state[agent] = individual_runner_list[0]
             mem_state[agent] = individual_runner_list[1]
             info_all[agent] = individual_runner_list[-2]

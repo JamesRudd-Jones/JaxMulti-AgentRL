@@ -63,9 +63,9 @@ def main(_):
     utils = Utils_KS(config)
 
     ####################################################################################################################
-    env = GymnaxToJaxMARL("SailingEnv", env=SailingEnv())  # TODO how to adjust default params for this step
-    env_params = env.default_params
-    utils = Utils_KS(config)
+    # env = GymnaxToJaxMARL("SailingEnv", env=SailingEnv())  # TODO how to adjust default params for this step
+    # env_params = env.default_params
+    # utils = Utils_KS(config)
 
     if config.NORMALISE_ENV:
         env = NormalisedEnv(env, env_params)
