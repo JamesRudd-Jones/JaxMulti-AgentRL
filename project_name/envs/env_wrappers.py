@@ -203,3 +203,47 @@ class GymnaxToJaxMARL(object):
         if attr == "_env":
             raise AttributeError()
         return getattr(self._env, attr)
+
+
+class BifurcaGymToJaxMARL(object):
+    """
+    Based off: https://github.com/FLAIROx/JaxMARL/blob/main/jaxmarl/wrappers/gymnax.py
+    """
+
+    num_agents = 1
+    agent = 0
+    agents = [agent]
+
+    def __init__(self, env_name: str, env_kwargs: dict = {}, env=None):
+        self.env_name = env_name
+
+        if env is None:
+            self._env = gymnax.make(env_name, **env_kwargs)
+        else:
+            self._env = env
+
+    @partial(jax.jit, static_argnums=(0,))
+    def step(self, actions, state, key, params=None):
+        # print('act', actions[self.agent])
+        obs, delta_obs, state, reward, done, info = self._env.step(actions[self.agent], state, key)
+        obs = jnp.expand_dims(obs, axis=0)
+        reward = jnp.expand_dims(reward, axis=0)
+        done = done  # {self.agent: done, "__all__": done}
+        return obs, delta_obs, state, reward, done, info
+
+    @partial(jax.jit, static_argnums=(0,))
+    def reset(self, key, params=None):
+        obs, state = self._env.reset(key)
+        obs = jnp.expand_dims(obs, axis=0)
+        return obs, state
+
+    def observation_space(self):
+        return self._env.observation_space()
+
+    def action_space(self):
+        return self._env.action_space()
+
+    def __getattr__(self, attr):
+        if attr == "_env":
+            raise AttributeError()
+        return getattr(self._env, attr)

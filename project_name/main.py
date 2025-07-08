@@ -7,7 +7,7 @@ import jax
 import jax.profiler
 from .envs.KS_JAX import KS_JAX
 from .envs.SailingEnv import SailingEnv
-from .envs.env_wrappers import GymnaxToJaxMARL, NormalisedEnv, FlattenObservationWrapper
+from .envs.env_wrappers import GymnaxToJaxMARL, NormalisedEnv, FlattenObservationWrapper, BifurcaGymToJaxMARL
 # from .deep_sea_wrapper import BsuiteToMARL
 from .pax.envs.in_the_matrix import InTheMatrix, EnvParams as MatrixEnvParams
 from .pax.envs.iterated_matrix_game import IteratedMatrixGame, EnvParams
@@ -16,61 +16,74 @@ from .pax.envs.coin_game import EnvParams as CoinGameParams
 from .agents import SingleAgent, MultiAgent
 from .utils import Transition, EvalTransition, Utils_IMG, Utils_IMPITM, Utils_CG, Utils_DEEPSEA, Utils_KS
 import jax.numpy as jnp
+import jax.random as jrandom
+import bifurcagym
 
 
 def main(_):
     config = get_config()
     config.NUM_AGENTS = len(config.AGENT_TYPE)
 
-    # TODO need to change update output to be for model info rather than env_state
-
-    # TODO make rnn an option for all rather than diff agents, be cool if can still call agent PPO_RNN for example
-
-    config.DEVICE = jax.extend.backend.get_backend().platform
-
-    # if config.CNN:
-    ####################################################################################################################
-    payoff = jnp.array([[[3, 0], [5, 1]], [[3, 5], [0, 1]]])
-    env = InTheMatrix(num_inner_steps=config.NUM_INNER_STEPS, num_outer_steps=config.NUM_META_STEPS,
-                      fixed_coin_location=False)
-    env_params = MatrixEnvParams(payoff_matrix=payoff, freeze_penalty=5)
-    # env = FlattenObservationWrapper(env)
-    utils = Utils_IMPITM(config)
-
-    ####################################################################################################################
-    # env = GymnaxToJaxMARL("DeepSea-bsuite", {"size": config.NUM_INNER_STEPS,
-    #                                          "sample_action_map": False})
-    # # TODO need to adjust the gymnax file with the custom one
-    # env_params = env.default_params
-    # utils = Utils_DEEPSEA(config)
-
-    ####################################################################################################################
-    payoff = [[3, 3], [1, 4], [4, 1], [2, 2]]  # [[-1, -1], [-3, 0], [0, -3], [-2, -2]]  # payoff matrix for the IPD
-    env = IteratedMatrixGame(num_inner_steps=config.NUM_INNER_STEPS, num_outer_steps=config.NUM_META_STEPS)
-    env_params = EnvParams(payoff_matrix=payoff)
-    utils = Utils_IMG(config)
-    # TODO the above game has issues with when it ends? causing loss spikes it seems
-
-    ####################################################################################################################
-    env = CoinGame(num_inner_steps=config.NUM_INNER_STEPS, num_outer_steps=config.NUM_META_STEPS,
-                   cnn=False, egocentric=False)
-    env_params = CoinGameParams(payoff_matrix=[[1, 1, -2], [1, 1, -2]])
-    utils = Utils_CG(config)
-
-    ####################################################################################################################
-    env = GymnaxToJaxMARL("KS_Equation", env=KS_JAX()) # TODO how to adjust default params for this step
-    env_params = env.default_params
-    utils = Utils_KS(config)
-
-    ####################################################################################################################
-    # env = GymnaxToJaxMARL("SailingEnv", env=SailingEnv())  # TODO how to adjust default params for this step
+    # # TODO need to change update output to be for model info rather than env_state
+    #
+    # # TODO make rnn an option for all rather than diff agents, be cool if can still call agent PPO_RNN for example
+    #
+    # config.DEVICE = jax.extend.backend.get_backend().platform
+    #
+    # # if config.CNN:
+    # ####################################################################################################################
+    # payoff = jnp.array([[[3, 0], [5, 1]], [[3, 5], [0, 1]]])
+    # env = InTheMatrix(num_inner_steps=config.NUM_INNER_STEPS, num_outer_steps=config.NUM_META_STEPS,
+    #                   fixed_coin_location=False)
+    # env_params = MatrixEnvParams(payoff_matrix=payoff, freeze_penalty=5)
+    # # env = FlattenObservationWrapper(env)
+    # utils = Utils_IMPITM(config)
+    #
+    # ####################################################################################################################
+    # # env = GymnaxToJaxMARL("DeepSea-bsuite", {"size": config.NUM_INNER_STEPS,
+    # #                                          "sample_action_map": False})
+    # # # TODO need to adjust the gymnax file with the custom one
+    # # env_params = env.default_params
+    # # utils = Utils_DEEPSEA(config)
+    #
+    # ####################################################################################################################
+    # payoff = [[3, 3], [1, 4], [4, 1], [2, 2]]  # [[-1, -1], [-3, 0], [0, -3], [-2, -2]]  # payoff matrix for the IPD
+    # env = IteratedMatrixGame(num_inner_steps=config.NUM_INNER_STEPS, num_outer_steps=config.NUM_META_STEPS)
+    # env_params = EnvParams(payoff_matrix=payoff)
+    # utils = Utils_IMG(config)
+    # # TODO the above game has issues with when it ends? causing loss spikes it seems
+    #
+    # ####################################################################################################################
+    # env = CoinGame(num_inner_steps=config.NUM_INNER_STEPS, num_outer_steps=config.NUM_META_STEPS,
+    #                cnn=False, egocentric=False)
+    # env_params = CoinGameParams(payoff_matrix=[[1, 1, -2], [1, 1, -2]])
+    # utils = Utils_CG(config)
+    #
+    # ####################################################################################################################
+    # env = GymnaxToJaxMARL("KS_Equation", env=KS_JAX()) # TODO how to adjust default params for this step
     # env_params = env.default_params
     # utils = Utils_KS(config)
+    #
+    # ####################################################################################################################
+    # # env = GymnaxToJaxMARL("SailingEnv", env=SailingEnv())  # TODO how to adjust default params for this step
+    # # env_params = env.default_params
+    # # utils = Utils_KS(config)
+    #
+    # if config.NORMALISE_ENV:
+    #     env = NormalisedEnv(env, env_params)
 
-    if config.NORMALISE_ENV:
-        env = NormalisedEnv(env, env_params)
-
-    key = jax.random.PRNGKey(config.SEED)
+    key = jrandom.key(config.SEED)
+    env = bifurcagym.make("Pendulum-v0",
+                          cont_state=True,
+                          cont_action=False,
+                          vmappable=False,
+                          normalised=False,
+                          autoreset=True,
+                          metrics=True,
+                          )
+    env = BifurcaGymToJaxMARL("Pendulum-v0", env=env)
+    utils = Utils_KS(config)  # TODO sort this bit out
+    env_params = None
 
     if config.NUM_AGENTS == 1:
         actor = SingleAgent(env=env, env_params=env_params, config=config, utils=utils, key=key)
@@ -84,7 +97,7 @@ def main(_):
     wandb.init(project="ProbInfMarl",
                entity=config.WANDB_ENTITY,
                config=config,
-               group="sailing_env_tests",
+               group="Bifurcagym_Tests",
                mode=config.WANDB
                )
 
@@ -93,7 +106,8 @@ def main(_):
         # train = jax.jit(run_train(config))
         out = jax.block_until_ready(train())  # .block_until_ready()
 
-        run_eval(config, actor, env, env_params, utils, out["runner_state"][0][0], out["runner_state"][0][1])
+        # run_eval(config, actor, env, env_params, utils, out["runner_state"][0][0], out["runner_state"][0][1])
+        # TODO sort out the eval part
 
     print("FINITO")
 

@@ -97,11 +97,10 @@ class ERSACAgent(AgentBase):
         pi, value, action_logits = train_state.ac_state.apply_fn(train_state.ac_state.params, ac_in[0])
         key, _key = jrandom.split(key)
         action = pi.sample(seed=_key)
-        log_prob = pi.log_prob(action)
 
         # action = jnp.ones_like(action)  # TODO for testing randomized actions
 
-        return mem_state, action, log_prob, value, key
+        return mem_state, action, key
 
     @partial(jax.jit, static_argnums=(0,))
     def _get_reward_noise(self, ens_state: TrainStateRP, obs: chex.Array, actions: chex.Array, key) -> chex.Array:
@@ -123,8 +122,8 @@ class ERSACAgent(AgentBase):
         return ensembled_reward
 
     @partial(jax.jit, static_argnums=(0,))
-    def update(self, runner_state, agent, traj_batch):
-        traj_batch = jax.tree_map(lambda x: x[:, agent], traj_batch)
+    def update(self, runner_state, agent, traj_batch, unused):
+        traj_batch = jax.tree.map(lambda x: x[:, agent], traj_batch)
         train_state, mem_state, env_state, ac_in, key = runner_state
 
         # key, _key = jrandom.split(key)
@@ -160,9 +159,13 @@ class ERSACAgent(AgentBase):
 
             entropy = policy_dist.entropy()
 
-            policy_loss = -jnp.mean(log_prob * jax.lax.stop_gradient(k_estimate - values[:-1]) + tau * entropy)
+            # policy_loss = -jnp.mean(log_prob * jax.lax.stop_gradient(k_estimate - values[:-1]) + tau * entropy)
+            #
+            # return policy_loss + value_loss, entropy
 
-            return policy_loss + value_loss, entropy
+            policy_loss = jnp.mean(log_prob * jax.lax.stop_gradient(k_estimate - values[:-1]) - tau * entropy)
+
+            return -(policy_loss - value_loss), entropy
 
         (pv_loss, entropy), grads = jax.value_and_grad(ac_loss, has_aux=True, argnums=0)(train_state.ac_state.params,
                                                                                          traj_batch,
@@ -226,4 +229,4 @@ class ERSACAgent(AgentBase):
             info[f"Ensemble_{ensemble_id}_Reward_Pred_pv"] = rew_pred[ensemble_id, 6, 6]  # index random step and random batch
             info[f"Ensemble_{ensemble_id}_Loss"] = ensembled_loss[ensemble_id]
 
-        return train_state, mem_state, env_state, info, key
+        return train_state, mem_state, info, key

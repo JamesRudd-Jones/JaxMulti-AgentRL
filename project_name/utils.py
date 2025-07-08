@@ -374,12 +374,12 @@ class Utils_KS(Utils_IMG):
         return inter.reshape((num_agents, num_envs, *inter.shape[2:]))
 
     @staticmethod
-    def action_space(env, env_params):
+    def action_space(env):
         return env.action_space().shape[0]
 
     @staticmethod
     def observation_space(env, env_params):
-        return env.observation_space(env_params).shape[0]
+        return env.observation_space().shape[0]
 
     def visitation(self, env_state, traj_batch, final_obs):
         return None

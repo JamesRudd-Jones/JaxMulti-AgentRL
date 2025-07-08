@@ -25,11 +25,11 @@ class SingleAgent:
 
     @partial(jax.jit, static_argnums=(0,))
     def act(self, train_state: Any, mem_state: chex.Array, obs_batch: Dict[str, chex.Array], last_done: chex.Array, key: chex.PRNGKey) -> Tuple[chex.Array, chex.Array, chex.PRNGKey]:  # TODO add better chex for trainstate
-        ac_in = (obs_batch,
-                 last_done,
+        ac_in = (obs_batch[0],
+                 last_done[0],
                  )
         mem_state, action, key = self.agent.act(train_state, mem_state, ac_in, key)
-        return mem_state, action, key
+        return mem_state, jnp.expand_dims(action, axis=0), key
 
     @partial(jax.jit, static_argnums=(0,))
     def update_encoding(self, train_state: Any, mem_state: Any, obs_batch: Any, action: Any, reward: Any, done: Any, key):
@@ -48,7 +48,7 @@ class SingleAgent:
         trajectory_batch = trajectory_batch._replace(mem_state=new_mem_state)  # TODO check this is fine
         ac_in = (last_obs_batch, last_done)
         train_state = (train_state, mem_state, env_state, ac_in, key)
-        train_state, mem_state, env_state, info, key = self.agent.update(train_state, 0, trajectory_batch, None)
+        train_state, mem_state, info, key = self.agent.update(train_state, 0, trajectory_batch, None)
         info_all[0] = info
 
-        return train_state, mem_state, env_state, last_obs_batch, last_done, info_all, key
+        return train_state, mem_state, info_all, key
