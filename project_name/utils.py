@@ -26,7 +26,6 @@ class Transition(NamedTuple):
     obs: jnp.ndarray
     mem_state: MemoryState
     # env_state: Any  # TODO added this but can change
-    info: jnp.ndarray
 
 
 class EvalTransition(NamedTuple):

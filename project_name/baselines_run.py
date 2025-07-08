@@ -1,5 +1,5 @@
-import jax.numpy as jnp
 import jax
+import jax.numpy as jnp
 import jax.random as jrandom
 import wandb
 from project_name.config import get_config  # TODO dodge need to know how to fix this
@@ -40,10 +40,10 @@ def run_train(config, actor, env, env_params, utils):
                                                                                       key_step,
                                                                                       )
                 # TODO should there be an individual done and also a global done?
-                info = jax.tree_util.tree_map(lambda x: jnp.swapaxes(jnp.tile(x[:, jnp.newaxis],
-                                                                              (1, config.NUM_AGENTS)),
-                                                                     0, 1),
-                                    info)  # TODO not sure if need this basically
+                # info = jax.tree_util.tree_map(lambda x: jnp.swapaxes(jnp.tile(x[:, jnp.newaxis],
+                #                                                               (1, config.NUM_AGENTS)),
+                #                                                      0, 1),
+                #                     info)  # TODO not sure if need this basically
                 done_batch_GN = jnp.swapaxes(jnp.tile(done_N[:, jnp.newaxis], (1, config.NUM_AGENTS)), 0, 1)
                 nobs_GNO = jnp.swapaxes(nobs_NGO, 0, 1)
                 reward_GN = jnp.swapaxes(reward_NG, 0, 1)
@@ -63,12 +63,11 @@ def run_train(config, actor, env, env_params, utils):
                                         obs_GNO,
                                         mem_state,
                                         # env_state,  # TODO have added for info purposes
-                                        info,
                                         )
 
-                return (train_state, mem_state, env_state, nobs_GNO, done_batch_GN, key), transition
+                return (train_state, mem_state, env_state, nobs_GNO, done_batch_GN, key), (transition, info)
 
-            runner_state, trajectory_batch = jax.lax.scan(_run_episode_step, runner_state, None, config.NUM_INNER_STEPS)
+            runner_state, (trajectory_batch, traj_info) = jax.lax.scan(_run_episode_step, runner_state, None, config.NUM_INNER_STEPS)
             train_state, mem_state, env_state, last_obs_GNO, done_GN, key = runner_state
 
             train_state, mem_state, agent_info, key = actor.update(train_state,
@@ -80,22 +79,20 @@ def run_train(config, actor, env, env_params, utils):
                                                                    trajectory_batch)
             # TODO can we remove some items from the update, perhaps env_state?
 
-            def callback(traj_batch, env_stats, agent_info, update_steps):
+            def callback(traj_batch, traj_info, env_stats, agent_info, update_steps):
                 metric_dict = {"env_step": update_steps * config.NUM_ENVS * config.NUM_INNER_STEPS,
                                # "env_stats": env_stats,
                                }
 
-                return_values = traj_batch.info["returned_episode_returns"][traj_batch.info["returned_episode"]]
-                timesteps = traj_batch.info["timestep"][traj_batch.info["returned_episode"]] * config.NUM_ENVS
+                return_values = traj_info["returned_episode_returns"][traj_info["returned_episode"]]
+                timesteps = traj_info["timestep"][traj_info["returned_episode"]] * config.NUM_ENVS
                 # TODO this must be so slow can we improve the time taken
                 for t in range(len(timesteps)):
                     metric_dict["global step"] = timesteps[t]
                     metric_dict["episodic return"] = return_values[t]
                     for idx, agent in enumerate(config.AGENT_TYPE):
-                        # shape is [num_meta_steps, num_inner_steps, num_agents, num_envs]
-                        metric_dict[f"avg_reward_{agent}"] = traj_batch.reward[t, :, idx, :].mean()
-                        # step_metric_dict[f"avg_reward_{agent}_{idx}"] = traj_batch.reward[step_idx, :, idx, :].mean()
-                        # step_metric_dict[f"avg_reward_{agent}_{idx}"] = traj_batch.reward[step_idx, -1, idx, :].mean()
+                        # shape is [num_inner_steps, num_agents, num_envs]
+                        metric_dict[f"avg_reward_{agent}"] = traj_batch.reward[t, idx, :].mean()
                         # TODO have added the -1 for deepsea
                 for idx, agent in enumerate(config.AGENT_TYPE):
                     for item in agent_info[idx]:
@@ -110,7 +107,7 @@ def run_train(config, actor, env, env_params, utils):
             # env_stats = env_state
             # TODO remove these stats if not using them and replace with deepsea stats somehow
 
-            jax.experimental.io_callback(callback, None, trajectory_batch, env_stats, agent_info, update_steps)
+            jax.experimental.io_callback(callback, None, trajectory_batch, traj_info, env_stats, agent_info, update_steps)
 
             update_steps += 1
 

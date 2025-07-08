@@ -79,8 +79,8 @@ class PPOAgent(AgentBase):
         action = pi.sample(seed=_key)
         log_prob = pi.log_prob(action)
 
-        mem_state.extras["values"] = value.squeeze(0)
-        mem_state.extras["log_probs"] = log_prob.squeeze(0)
+        mem_state.extras["values"] = value
+        mem_state.extras["log_probs"] = log_prob
         mem_state = mem_state._replace(extras=mem_state.extras)
 
         return mem_state, action, key
@@ -96,11 +96,10 @@ class PPOAgent(AgentBase):
         def _calculate_gae(traj_batch, last_val):
             def _get_advantages(gae_and_next_value, transition):
                 gae, next_value = gae_and_next_value
-                done, value, reward = (
-                    transition.global_done,
-                    transition.mem_state.extras["values"],
-                    transition.reward,
-                )
+                done, value, reward = (transition.global_done,
+                                       transition.mem_state.extras["values"],
+                                       transition.reward,
+                                       )
                 delta = reward + self.agent_config.GAMMA * next_value * (1 - done) - value
                 gae = (delta + self.agent_config.GAMMA * self.agent_config.GAE_LAMBDA * (1 - done) * gae)
                 return (gae, value), gae
@@ -120,13 +119,10 @@ class PPOAgent(AgentBase):
                 traj_batch, advantages, targets = batch_info
 
                 def _loss_fn(params, traj_batch, gae, targets):
-                    # RERUN NETWORK
                     pi, value, _ = train_state.apply_fn(params,
-                                                      (traj_batch.obs,
-                                                       traj_batch.done,
-                                                       # traj_batch.avail_actions
-                                                       ),
-                                                      )
+                                                       (traj_batch.obs,
+                                                        traj_batch.done),
+                                                       )
                     log_prob = pi.log_prob(traj_batch.action)
 
                     # CALCULATE VALUE LOSS
@@ -192,4 +188,4 @@ class PPOAgent(AgentBase):
                 "entropy": jnp.mean(loss_info[1][2]),
                 }
 
-        return train_state, mem_state, env_state, info, key
+        return train_state, mem_state, info, key
