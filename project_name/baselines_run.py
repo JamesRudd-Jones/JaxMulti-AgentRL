@@ -84,17 +84,17 @@ def run_train(config, actor, env, env_params, utils):
                                # "env_stats": env_stats,
                                }
 
-                return_values = traj_info["returned_episode_returns"][traj_info["returned_episode"]]
-                timesteps = traj_info["timestep"][traj_info["returned_episode"]] * config.NUM_ENVS
-                # TODO this must be so slow can we improve the time taken
-                for t in range(len(timesteps)):
-                    metric_dict["global step"] = timesteps[t]
-                    metric_dict["episodic return"] = return_values[t]
-                    for idx, agent in enumerate(config.AGENT_TYPE):
-                        # shape is [num_inner_steps, num_agents, num_envs]
-                        metric_dict[f"avg_reward_{agent}"] = traj_batch.reward[t, idx, :].mean()
-                        # TODO have added the -1 for deepsea
+                # return_values = traj_info["returned_episode_returns"][traj_info["returned_episode"]]
+                # timesteps = traj_info["timestep"][traj_info["returned_episode"]] * config.NUM_ENVS
+                # # TODO this must be so slow can we improve the time taken
+                # for t in range(len(timesteps)):
+                #     metric_dict["global step"] = timesteps[t]
+                #     metric_dict["episodic return"] = return_values[t]
+                # TODO the above doesn't work but is the most correct way for autoresetting envs
+
                 for idx, agent in enumerate(config.AGENT_TYPE):
+                    # shape is [num_inner_steps, num_agents, num_envs]
+                    metric_dict[f"avg_reward_{agent}"] = traj_batch.reward[:, idx, :].mean()
                     for item in agent_info[idx]:
                         metric_dict[f"{agent}-{item}"] = agent_info[idx][item]
                         # TODO do we even need this here as surely the loss is not per step?
