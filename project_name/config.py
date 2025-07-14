@@ -10,7 +10,7 @@ def get_config():
     # config.CNN = True
 
     config.NUM_INNER_STEPS = 128  # ep rollout length
-    config.NUM_UPDATES = 1000  # number of rollouts
+    config.NUM_UPDATES = 10000  # number of rollouts
     config.NUM_ENVS = 64
     config.NUM_EVAL_STEPS = 1000
 

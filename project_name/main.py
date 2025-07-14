@@ -73,7 +73,7 @@ def main(_):
     #     env = NormalisedEnv(env, env_params)
 
     key = jrandom.key(config.SEED)
-    env = bifurcagym.make("Pendulum-v0",
+    env = bifurcagym.make("CartPole-v0",
                           cont_state=True,
                           cont_action=False,
                           vmappable=False,
