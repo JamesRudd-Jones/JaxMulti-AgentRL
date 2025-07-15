@@ -48,13 +48,13 @@ def run_train(config, actor, env, env_params, utils):
                 nobs_GNO = jnp.swapaxes(nobs_NGO, 0, 1)
                 reward_GN = jnp.swapaxes(reward_NG, 0, 1)
 
-                mem_state = actor.update_encoding(train_state,
-                                                  mem_state,
-                                                  jnp.swapaxes(nobs_NGO, 0, 1),
-                                                  action_GNA,
-                                                  reward_GN,
-                                                  done_batch_GN,
-                                                  key)
+                # mem_state = actor.update_encoding(train_state,
+                #                                   mem_state,
+                #                                   jnp.swapaxes(nobs_NGO, 0, 1),
+                #                                   action_GNA,
+                #                                   reward_GN,
+                #                                   done_batch_GN,
+                #                                   key)
 
                 transition = Transition(done_batch_GN,
                                         done_batch_GN,  # TODO why are there two done batches? refer above re local and global
@@ -65,7 +65,7 @@ def run_train(config, actor, env, env_params, utils):
                                         # env_state,  # TODO have added for info purposes
                                         )
 
-                return (train_state, mem_state, env_state, nobs_GNO, done_batch_GN, key), (transition, info)
+                return (train_state, mem_state, nenv_state, nobs_GNO, done_batch_GN, key), (transition, info)
 
             runner_state, (trajectory_batch, traj_info) = jax.lax.scan(_run_episode_step, runner_state, None, config.NUM_INNER_STEPS)
             train_state, mem_state, env_state, last_obs_GNO, done_GN, key = runner_state
@@ -84,12 +84,12 @@ def run_train(config, actor, env, env_params, utils):
                                # "env_stats": env_stats,
                                }
 
-                # return_values = traj_info["returned_episode_returns"][traj_info["returned_episode"]]
-                # timesteps = traj_info["timestep"][traj_info["returned_episode"]] * config.NUM_ENVS
+                return_values = traj_info["returned_episode_returns"][traj_info["returned_episode"]]
+                timesteps = traj_info["timestep"][traj_info["returned_episode"]] * config.NUM_ENVS
                 # # TODO this must be so slow can we improve the time taken
-                # for t in range(len(timesteps)):
-                #     metric_dict["global step"] = timesteps[t]
-                #     metric_dict["episodic return"] = return_values[t]
+                for t in range(len(timesteps)):
+                    metric_dict["global step"] = timesteps[t]
+                    metric_dict["episodic return"] = return_values[t]
                 # TODO the above doesn't work but is the most correct way for autoresetting envs
 
                 for idx, agent in enumerate(config.AGENT_TYPE):

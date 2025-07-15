@@ -22,7 +22,7 @@ class PPOAgent(AgentBase):
         self.agent_config = get_PPO_config()
         self.env = env
         self.env_params = env_params
-        self.network = ActorCritic(env.action_space().n, config=config)
+        self.network = ActorCritic(env.action_space().shape[0], config=config)
 
         if self.config.CNN:
             init_x = ((jnp.zeros((1, config.NUM_ENVS, *env.observation_space(env_params).shape))),
@@ -96,13 +96,9 @@ class PPOAgent(AgentBase):
         def _calculate_gae(traj_batch, last_val):
             def _get_advantages(gae_and_next_value, transition):
                 gae, next_value = gae_and_next_value
-                done, value, reward = (transition.global_done,
-                                       transition.mem_state.extras["values"],
-                                       transition.reward,
-                                       )
-                delta = reward + self.agent_config.GAMMA * next_value * (1 - done) - value
-                gae = (delta + self.agent_config.GAMMA * self.agent_config.GAE_LAMBDA * (1 - done) * gae)
-                return (gae, value), gae
+                delta = transition.reward + self.agent_config.GAMMA * next_value * (1 - transition.global_done) - transition.mem_state.extras["values"]
+                gae = (delta + self.agent_config.GAMMA * self.agent_config.GAE_LAMBDA * (1 - transition.global_done) * gae)
+                return (gae, transition.mem_state.extras["values"]), gae
 
             _, advantages = jax.lax.scan(_get_advantages,
                                          (jnp.zeros_like(last_val), last_val),

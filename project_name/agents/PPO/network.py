@@ -21,7 +21,7 @@ class CNNtoLinear(nn.Module):
 class ActorCritic(nn.Module):  # TODO change this and remove RNN
     action_dim: Sequence[int]
     config: ConfigDict
-    activation: str = "tanh"
+    activation: str = "relu"
 
     @nn.compact
     def __call__(self, x):

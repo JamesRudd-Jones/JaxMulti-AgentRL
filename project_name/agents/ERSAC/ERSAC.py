@@ -38,7 +38,7 @@ class ERSACAgent(AgentBase):
         self.agent_config = get_ERSAC_config()
         self.env = env
         self.env_params = env_params
-        self.network = ActorCritic(env.action_space().n, config=config, agent_config=self.agent_config)
+        self.network = ActorCritic(env.action_space().shape[0], config=config, agent_config=self.agent_config)
         self.rp_network = EnsembleNetwork(config=config, agent_config=self.agent_config)
 
         if self.config.CNN:
