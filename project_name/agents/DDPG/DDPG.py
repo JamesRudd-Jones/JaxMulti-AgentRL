@@ -1,4 +1,6 @@
 import sys
+
+import chex
 import jax
 import jax.numpy as jnp
 import jax.random as jrandom
@@ -9,7 +11,7 @@ from project_name.agents.DDPG import get_DDPG_config, ContinuousRNNQNetwork, Sca
 import flashbax as fbx
 import optax
 from functools import partial
-from typing import Any, NamedTuple
+from typing import Any, NamedTuple, Tuple
 import flax
 
 
@@ -36,31 +38,29 @@ class DDPGAgent(AgentBase):
                  env_params,
                  key,
                  config,
-                 utils):
+                 ):
         self.config = config
         self.agent_config = get_DDPG_config()
         self.env = env
         self.env_params = env_params
-        self.utils = utils
-        self.critic_network = ContinuousRNNQNetwork(config=config)  # TODO separate RNN and normal
-        self.actor_network = DeterministicPolicy(utils.action_space(env, env_params), config=config,
-                                                 action_scale=self.agent_config.ACTION_SCALE)
+
+        if env.action_space().dtype is jnp.int_:
+            raise ValueError("DDPG not currently possible with disrete actions.")
+        else:
+            self.critic_network = ContinuousRNNQNetwork(config=config)  # TODO separate RNN and normal
+            self.actor_network = DeterministicPolicy(env.action_space().shape[0],
+                                                     config=config,
+                                                     action_scale=self.agent_config.ACTION_SCALE)
 
         key, _key = jrandom.split(key)
-        init_hstate = ScannedRNN.initialize_carry(config.NUM_ENVS, self.agent_config.GRU_HIDDEN_DIM)
+        init_hstate = ScannedRNN.initialise_carry(config.NUM_ENVS, self.agent_config.GRU_HIDDEN_DIM)
 
-        if self.config.CNN:
-            init_x = ((jnp.zeros((1, config.NUM_ENVS, utils.observation_space(env, env_params))),
-                       (jnp.zeros((1, config.NUM_ENVS, utils.action_space(env, env_params))))),
-                      jnp.zeros((1, config.NUM_ENVS)),
-                      )
-        else:
-            init_x = ((jnp.zeros((1, config.NUM_ENVS, utils.observation_space(env, env_params))),
-                       (jnp.zeros((1, config.NUM_ENVS, utils.action_space(env, env_params))))),
-                      jnp.zeros((1, config.NUM_ENVS)),
-                      )
+        init_x = ((jnp.zeros((1, config.NUM_ENVS, env.observation_space().shape[0])),
+                   (jnp.zeros((1, config.NUM_ENVS, env.action_space().shape[0])))),
+                  jnp.zeros((1, config.NUM_ENVS)),
+                  )
 
-        init_actor_x = (jnp.zeros((1, config.NUM_ENVS, utils.observation_space(env, env_params))),
+        init_actor_x = (jnp.zeros((1, config.NUM_ENVS, env.observation_space().shape[0])),
                       jnp.zeros((1, config.NUM_ENVS)),
                       )
 
@@ -83,11 +83,6 @@ class DDPGAgent(AgentBase):
                                                    transition_steps=self.agent_config.EPS_DECAY * config.NUM_UPDATES,
                                                    )
 
-        def linear_schedule(count):  # TODO put this somewhere better
-            frac = (1.0 - (count // (
-                    self.agent_config.NUM_MINIBATCHES * self.agent_config.UPDATE_EPOCHS)) / config.NUM_UPDATES)
-            return self.agent_config.LR * frac
-
     def create_train_state(self):
         return (TrainStateDDPG(critic_state=TrainStateExt.create(apply_fn=self.critic_network.apply,
                                                                       params=self.critic_network_params,
@@ -97,23 +92,22 @@ class DDPGAgent(AgentBase):
                                                                params=self.actor_network_params,
                                                                target_params=self.actor_network_params,
                                                                tx=optax.adam(self.agent_config.LR_ACTOR, eps=1e-5))),
-                self.buffer.init(
-                    TransitionDDPG(done=jnp.zeros((self.config.NUM_ENVS), dtype=bool),
-                                  action=jnp.zeros((self.config.NUM_ENVS,
-                                                    self.utils.action_space(self.env, self.env_params))),
-                                  reward=jnp.zeros((self.config.NUM_ENVS)),
-                                  obs=jnp.zeros((self.config.NUM_ENVS,
-                                                 self.utils.observation_space(self.env, self.env_params)),
-                                                dtype=jnp.float32),
-                                  # TODO is it always an int for the obs?
-                                  )))
+                self.buffer.init(TransitionDDPG(done=jnp.zeros((self.config.NUM_ENVS,), dtype=bool),
+                                                action=jnp.zeros((self.config.NUM_ENVS,
+                                                                  self.env.action_space().shape[0])),
+                                                reward=jnp.zeros((self.config.NUM_ENVS,)),
+                                                obs=jnp.zeros((self.config.NUM_ENVS,
+                                                               self.env.observation_space().shape[0]),
+                                                              dtype=jnp.float32),
+                                                # TODO is it always an int for the obs?
+                                                )))
 
     @partial(jax.jit, static_argnums=(0,))
     def reset_memory(self, mem_state):
         return mem_state
 
     @partial(jax.jit, static_argnums=(0,))
-    def act(self, train_state: Any, mem_state: Any, ac_in: Any, key: Any):  # TODO better implement checks
+    def act(self, train_state: TrainStateDDPG, mem_state: Any, ac_in: chex.Array, key: chex.PRNGKey) -> Tuple[Any, chex.Array, chex.PRNGKey]:
         _, action = train_state.actor_state.apply_fn(train_state.actor_state.params, ac_in)  # TODO no rnn for now
         key, _key = jrandom.split(key)
         action += jnp.clip(jrandom.normal(_key, action.shape) * self.agent_config.ACTION_SCALE * self.agent_config.EXPLORATION_NOISE,
@@ -122,7 +116,7 @@ class DDPGAgent(AgentBase):
         return mem_state, action, key
 
     @partial(jax.jit, static_argnums=(0,))
-    def update(self, runner_state, agent, traj_batch, unused_2):
+    def update(self, runner_state: Any, agent: int, traj_batch: chex.Array, unused_2: Any) -> Tuple[TrainStateDDPG, Any, dict, chex.PRNGKey]:
         traj_batch = jax.tree_util.tree_map(lambda x: x[:, agent], traj_batch)
 
         train_state, mem_state, env_state, ac_in, key = runner_state
@@ -204,4 +198,4 @@ class DDPGAgent(AgentBase):
                 "actor_loss": jnp.mean(actor_loss)
                 }
 
-        return train_state, mem_state, env_state, info, key
+        return train_state, mem_state, info, key

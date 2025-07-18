@@ -1,4 +1,3 @@
-import sys
 import jax
 import jax.numpy as jnp
 from typing import Any, NamedTuple
@@ -9,7 +8,7 @@ from flax.training.train_state import TrainState
 from project_name.utils import MemoryState
 from project_name.agents import AgentBase
 import chex
-from project_name.agents.ERSAC_MA import get_ERSAC_MA_config, ActorCritic, EnsembleNetwork
+from project_name.agents._in_construction.ERSAC_MA import get_ERSAC_MA_config, ActorCritic, EnsembleNetwork
 import numpy as np
 import distrax
 import flax

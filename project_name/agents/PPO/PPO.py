@@ -1,14 +1,16 @@
 import sys
+
 import jax
 import jax.numpy as jnp
-from typing import Any
 import jax.random as jrandom
+import chex
+from typing import Any, Tuple
 from functools import partial
 import optax
 from flax.training.train_state import TrainState
 from project_name.utils import MemoryState
-from project_name.agents import AgentBase
-from project_name.agents.PPO import get_PPO_config, ActorCritic
+from project_name.agents import AgentBase, agent_utils
+from project_name.agents.PPO import get_PPO_config, ActorCriticDiscrete, ActorCriticContinuous, ActorCriticRNNDiscrete, ActorCriticRNNContinuous, ScannedRNN
 
 
 class PPOAgent(AgentBase):
@@ -17,30 +19,38 @@ class PPOAgent(AgentBase):
                  env_params,
                  key,
                  config,
-                 utils):
+                 ):
         self.config = config
         self.agent_config = get_PPO_config()
         self.env = env
         self.env_params = env_params
-        self.network = ActorCritic(env.action_space().shape[0], config=config)
-
-        if self.config.CNN:
-            init_x = ((jnp.zeros((1, config.NUM_ENVS, *env.observation_space(env_params).shape))),
-                      jnp.zeros((1, config.NUM_ENVS)),
-                      )
-        else:
-            init_x = (jnp.zeros((1, config.NUM_ENVS, utils.observation_space(env, env_params))),
-                      jnp.zeros((1, config.NUM_ENVS)),
-                      )
 
         key, _key = jrandom.split(key)
-        self.network_params = self.network.init(_key, init_x)
+
+        init_x = (jnp.zeros((1, config.NUM_ENVS, env.observation_space().shape[0])),
+                  jnp.zeros((1, config.NUM_ENVS)),
+                  )
+
+        if self.agent_config.RECURRENT:
+            if env.action_space().dtype is jnp.int_:
+                self.network = ActorCriticRNNDiscrete(env.action_space().shape[0], config=config)
+            else:
+                self.network = ActorCriticRNNContinuous(env.action_space().shape[0], config=config)
+            self.init_hstate = ScannedRNN.initialise_carry(config.NUM_ENVS, self.agent_config.GRU_HIDDEN_DIM)
+            self.network_params = self.network.init(_key, self.init_hstate, init_x)
+        else:
+            if env.action_space().dtype is jnp.int_:  # TODO think this is correct assumption
+                self.network = ActorCriticDiscrete(env.action_space().shape[0], config=config)
+            else:
+                self.network = ActorCriticContinuous(env.action_space().shape[0], config=config)
+            self.network_params = self.network.init(_key, init_x)
 
         self.agent_config.NUM_MINIBATCHES = min(self.config.NUM_ENVS, self.agent_config.NUM_MINIBATCHES)
 
-        def linear_schedule(count):  # TODO put this somewhere better
-            frac = (1.0 - (count // (self.agent_config.NUM_MINIBATCHES * self.agent_config.UPDATE_EPOCHS)) / config.NUM_UPDATES)
-            return self.agent_config.LR * frac
+        linear_schedule = agent_utils.make_linear_schedule(self.agent_config.NUM_MINIBATCHES,
+                                                           self.agent_config.UPDATE_EPOCHS,
+                                                           config.NUM_UPDATES,
+                                                           self.agent_config.LR)
 
         if self.agent_config.ANNEAL_LR:
             self.tx = optax.chain(optax.clip_by_global_norm(self.agent_config.MAX_GRAD_NORM),
@@ -56,39 +66,39 @@ class PPOAgent(AgentBase):
                                   params=self.network_params,
                                   tx=self.tx),
                 MemoryState(hstate=jnp.zeros((self.config.NUM_ENVS, 1)),
-                            extras={
-                                "values": jnp.zeros(self.config.NUM_ENVS),
-                                "log_probs": jnp.zeros(self.config.NUM_ENVS),
-                            })
+                            extras={"values": jnp.zeros(self.config.NUM_ENVS),
+                                    "log_probs": jnp.zeros(self.config.NUM_ENVS),
+                                    })
                 )
 
     @partial(jax.jit, static_argnums=(0,))
-    def reset_memory(self, mem_state):
-        mem_state = mem_state._replace(extras={
-            "values": jnp.zeros(self.config.NUM_ENVS),
-            "log_probs": jnp.zeros(self.config.NUM_ENVS),
-        },
-            hstate=jnp.zeros((self.config.NUM_ENVS, 1)),
-        )
+    def reset_memory(self, mem_state: MemoryState) -> MemoryState:
+        mem_state = mem_state._replace(extras={"values": jnp.zeros(self.config.NUM_ENVS),
+                                               "log_probs": jnp.zeros(self.config.NUM_ENVS),
+                                               },
+                                       hstate=jnp.zeros((self.config.NUM_ENVS, 1)),
+                                       )
         return mem_state
 
     @partial(jax.jit, static_argnums=(0,))
-    def act(self, train_state: Any, mem_state: Any, ac_in: Any, key: Any):  # TODO better implement checks
-        pi, value, action_logits = train_state.apply_fn(train_state.params, ac_in)
+    def act(self, train_state: TrainState, mem_state: MemoryState, ac_in_NZ: chex.Array, key: chex.PRNGKey) -> Tuple[MemoryState, chex.Array, chex.PRNGKey]:
+        pi, value_N, action_logits_NA = train_state.apply_fn(train_state.params, ac_in_NZ)
         key, _key = jrandom.split(key)
-        action = pi.sample(seed=_key)
-        log_prob = pi.log_prob(action)
+        action_N = pi.sample(seed=_key)
+        log_prob_N = pi.log_prob(action_N)
 
-        mem_state.extras["values"] = value
-        mem_state.extras["log_probs"] = log_prob
+        action_NA = jnp.atleast_2d(action_N).reshape((self.config.NUM_ENVS, -1))  # so that we can use discrete and continuous dists interchangeably
+        # TODO does the reshape mess anything up?
+
+        mem_state.extras["values"] = value_N
+        mem_state.extras["log_probs"] = log_prob_N
         mem_state = mem_state._replace(extras=mem_state.extras)
 
-        return mem_state, action, key
+        return mem_state, action_NA, key
 
     @partial(jax.jit, static_argnums=(0,))
-    def update(self, runner_state, agent, traj_batch, unused_2):
-        traj_batch = jax.tree_util.tree_map(lambda x: x[:, agent], traj_batch)
-        # print(traj_batch)
+    def update(self, runner_state: Any, agent: jnp.int_, traj_batch: chex.Array, unused_2: Any) -> Tuple[TrainState, MemoryState, dict, chex.PRNGKey]:
+        traj_batch = jax.tree.map(lambda x: x[:, agent], traj_batch)  # index the agent
         train_state, mem_state, env_state, ac_in, key = runner_state
         _, last_val, _ = train_state.apply_fn(train_state.params, ac_in)
         last_val = last_val.squeeze(axis=0)
@@ -119,7 +129,9 @@ class PPOAgent(AgentBase):
                                                        (traj_batch.obs,
                                                         traj_batch.done),
                                                        )
-                    log_prob = pi.log_prob(traj_batch.action)
+                    reshaped_actions = jnp.reshape(traj_batch.action, shape=(*pi.batch_shape, *pi.event_shape))
+                    log_prob = pi.log_prob(reshaped_actions)
+                    # TODO a way to hopefully drop the extra 1 for discrete actions easily?
 
                     # CALCULATE VALUE LOSS
                     value_pred_clipped = traj_batch.mem_state.extras["values"] + (value - traj_batch.mem_state.extras["values"]).clip(-self.agent_config.CLIP_EPS,
@@ -159,9 +171,9 @@ class PPOAgent(AgentBase):
             batch = (traj_batch,
                      advantages,
                      targets)
-            shuffled_batch = jax.tree_util.tree_map(lambda x: jnp.take(x, permutation, axis=1), batch)
+            shuffled_batch = jax.tree.map(lambda x: jnp.take(x, permutation, axis=1), batch)
 
-            minibatches = jax.tree_util.tree_map(lambda x: jnp.swapaxes(
+            minibatches = jax.tree.map(lambda x: jnp.swapaxes(
                 jnp.reshape(x, [x.shape[0], self.agent_config.NUM_MINIBATCHES, -1] + list(x.shape[2:]), ), 1, 0, ),
                                                  shuffled_batch, )
 

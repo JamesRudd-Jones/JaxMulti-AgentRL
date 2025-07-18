@@ -75,7 +75,7 @@ def main(_):
     key = jrandom.key(config.SEED)
     env = bifurcagym.make("Pendulum-v0",
                           cont_state=True,
-                          cont_action=False,
+                          cont_action=True,
                           vmappable=False,
                           normalised=False,
                           autoreset=True,
@@ -109,7 +109,7 @@ def main(_):
         # run_eval(config, actor, env, env_params, utils, out["runner_state"][0][0], out["runner_state"][0][1])
         # TODO sort out the eval part
 
-    print("FINITO")
+    print("TRAINING HATH FINISHED")
 
 if __name__ == '__main__':
     app.run(main)

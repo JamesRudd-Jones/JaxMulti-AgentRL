@@ -1,4 +1,3 @@
-import sys
 import jax
 import jax.numpy as jnp
 from typing import Any, NamedTuple
@@ -9,11 +8,8 @@ from flax.training.train_state import TrainState
 from project_name.utils import MemoryState
 from project_name.agents import AgentBase
 import chex
-from project_name.agents.VLITE_PPO import get_VLITE_PPO_config, ActorCritic, EnsembleNetwork, binomial
-import numpy as np
-import distrax
+from project_name.agents._in_construction.VLITE_PPO import get_VLITE_PPO_config, ActorCritic, EnsembleNetwork, binomial
 import flax
-import rlax
 from distrax._src.utils import math
 
 

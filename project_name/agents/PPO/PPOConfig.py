@@ -18,4 +18,6 @@ def get_PPO_config():
     config.MAX_GRAD_NORM = 1.0
     config.ADAM_EPS = 1e-5
 
+    config.RECURRENT = False
+
     return config

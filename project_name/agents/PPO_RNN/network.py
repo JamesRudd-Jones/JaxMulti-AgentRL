@@ -27,17 +27,17 @@ class ScannedRNN(nn.Module):
         ins, resets = x
 
         rnn_state = jnp.where(resets[:, jnp.newaxis],
-                              self.initialize_carry(*rnn_state.shape),
+                              self.initialise_carry(*rnn_state.shape),
                               rnn_state,
                               )
         new_rnn_state, y = nn.GRUCell(features=ins.shape[1])(rnn_state, ins)
         return new_rnn_state, y
 
     @staticmethod
-    def initialize_carry(batch_size, hidden_size):
+    def initialise_carry(batch_size, hidden_size):
         # Use a dummy key since the default state init fn is just zeros.
         cell = nn.GRUCell(features=hidden_size)
-        return cell.initialize_carry(jrandom.PRNGKey(0), (batch_size, hidden_size))
+        return cell.initialise_carry(jrandom.key(0), (batch_size, hidden_size))
 
 
 class CNNtoLinear(nn.Module):

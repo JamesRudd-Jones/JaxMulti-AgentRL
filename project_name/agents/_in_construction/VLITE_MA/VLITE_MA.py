@@ -1,4 +1,3 @@
-import sys
 import jax
 import jax.numpy as jnp
 from typing import Any, NamedTuple, Tuple
@@ -9,13 +8,12 @@ from flax.training.train_state import TrainState
 from project_name.utils import MemoryState
 from project_name.agents import AgentBase
 import chex
-from project_name.agents.VLITE_MA import get_VLITEMA_config, ActorCritic, EnsembleNetwork, EnsembleOppNetwork, binomial
+from project_name.agents._in_construction.VLITE_MA import get_VLITEMA_config, ActorCritic, EnsembleNetwork, EnsembleOppNetwork, binomial
 import numpy as np
 import distrax
 import flax
 import rlax
-from distrax._src.utils import math
-from project_name.utils import remove_element, remove_element_2, remove_element_3
+from project_name.utils import remove_element_3
 
 
 class TrainStateRP(TrainState):  # TODO check gradients do not update the static prior
